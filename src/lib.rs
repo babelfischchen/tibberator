@@ -59,10 +59,18 @@ pub mod tibber {
     )]
     pub struct LiveMeasurement;
 
-    /// Creates a reqwest client using the `access token`.
+    /// # create_client
     ///
-    /// # Errors
-    /// This method will return an error if the client could not be created.
+    /// The `create_client` function constructs an HTTP client for making requests with the specified access token.
+    /// It sets up necessary headers, including the authorization header with the provided access token.
+    ///
+    /// ## Parameters
+    /// - `access_token`: A string representing the access token used for authentication.
+    ///
+    /// ## Returns
+    /// A `Result` containing either:
+    /// - A configured `Client` object that can be used to make HTTP requests.
+    /// - An error of type `reqwest::Error` if there are issues during client creation.
     ///
     fn create_client(access_token: &str) -> Result<Client, reqwest::Error> {
         let mut headers = HeaderMap::new();
@@ -82,7 +90,15 @@ pub mod tibber {
 
     /// Creates and configures a http request in order to create a websocket connection.
     ///
-    /// The method uses `access_token` and the tibber `uri` to create a valid http request.
+    /// The `configure_request` function constructs an HTTP request builder with necessary headers.
+    /// It sets up the authorization header with the provided access token and other required headers.
+    ///
+    /// ## Parameters
+    /// - `access_token`: A string representing the access token used for authentication.
+    /// - `uri`: A `Uri` object representing the target URL.
+    ///
+    /// ## Returns
+    /// A `Builder` object that can be further customized before building the final request.
     ///
     /// # Panics
     ///
@@ -106,7 +122,7 @@ pub mod tibber {
         );
         headers.insert(
             http::header::USER_AGENT,
-            format!("tibberator/0.0.1 com.tibber/1.8.3")
+            format!("tibberator/0.1.0 com.tibber/1.8.3")
                 .parse()
                 .expect("User agent parse."),
         );
@@ -115,8 +131,18 @@ pub mod tibber {
 
     /// Creates a websocket by connecting to the Tibber API.
     ///
-    /// The method fetches the subscription URL to use from the Tibber API itself. Then
-    /// it configures the http-request and asynchronously connects the websocket.
+    /// The `create_websocket` function establishes a WebSocket connection for a GraphQL subscription.
+    /// It fetches the subscription URL using the provided `AccessConfig`, constructs the necessary request,
+    /// and connects to the WebSocket server.
+    ///
+    /// ## Parameters
+    /// - `config`: An `AccessConfig` containing configuration details (e.g., access token).
+    ///
+    /// ## Returns
+    /// A `Result` containing either:
+    /// - A tuple with a `WebSocketStream<ConnectStream>` representing the WebSocket connection
+    ///   and a `Response` containing additional information.
+    /// - An error of type `Box<dyn std::error::Error>` if there are issues during connection setup.
     ///
     /// # Errors
     ///
@@ -155,11 +181,21 @@ pub mod tibber {
     }
 
     /// Gets all `Home` data
-    /// 
-    /// cf. the tibber schema. Needs an `access_token` configured in `config` to fetch data.
-    /// 
-    /// # Examples
-    /// 
+    ///
+    /// Retrieves all `Home` data from the Tibber schema.
+    ///
+    /// Requires an `access_token` configured in the provided `config` to fetch data.
+    ///
+    /// ## Parameters
+    /// - `config`: An `AccessConfig` containing configuration details (e.g., access token).
+    ///
+    /// ## Returns
+    /// A `Result` containing either:
+    /// - A `graphql_client::Response` with the response data for the `Home` query.
+    /// - An error of type `reqwest::Error` if there are issues during data retrieval.
+    ///
+    /// ## Example Usage
+    ///
     /// ```
     ///   use tibberator::tibber;
     ///
@@ -204,10 +240,18 @@ pub mod tibber {
         fetch_data::<Viewer>(config, variables).await
     }
 
-    /// Handles the errors in a graphql_client response `errors` structure.
+    /// Retrieves all `Viewer` data from the Tibber schema.
     ///
-    /// Returns `None` if there were no errors. Returns an error if the
-    /// structure contained any errors.
+    /// Requires an `access_token` configured in the provided `config` to fetch data.
+    ///
+    /// ## Parameters
+    /// - `config`: An `AccessConfig` containing configuration details (e.g., access token).
+    ///
+    /// ## Returns
+    /// A `Result` containing either:
+    /// - A `graphql_client::Response` with the response data for the `Viewer` query.
+    /// - An error of type `reqwest::Error` if there are issues during data retrieval.
+    ///
     fn handle_response_error(
         errors: Option<Vec<graphql_client::Error>>,
     ) -> Option<Box<dyn std::error::Error>> {
@@ -226,13 +270,12 @@ pub mod tibber {
         }
     }
 
-    /// Fetches all available home ids for the provided `access_token` in `config`.
+    /// Retrieves all available home IDs for the provided `access_token` in the given `config`.
     ///
-    /// # Errors
-    ///
-    /// Returns an error if no connection to the Tibber API could be established.
-    /// Returns an error if the response contained any errors.
-    /// Returns an error if the viewer struct contains empty data.
+    /// ## Errors
+    /// - Returns an error if no connection to the Tibber API could be established.
+    /// - Returns an error if the response contains any errors.
+    /// - Returns an error if the viewer struct contains empty data.
     ///
     /// # Example
     ///
@@ -275,13 +318,12 @@ pub mod tibber {
         }
     }
 
-    /// Gets the websocket url to connect to the tibber service using the `access_token`.
+    /// Retrieves the WebSocket URL to connect to the Tibber service using the provided `access_token`.
     ///
-    /// # Errors
+    /// ## Errors
+    /// - Returns an error if the WebSocket URL could not be retrieved.
     ///
-    /// Will return an error if the websocket URL could not be retrieved
-    ///
-    /// # Examples
+    /// ## Example
     ///
     /// ```
     ///   use tibberator::tibber;
@@ -325,10 +367,22 @@ pub mod tibber {
 
     /// Creates the websocket subscription in order to retrieve live data from Tibber.
     ///
-    /// The method needs the Tibber `access_token` as well as the GraphQL `variables`
-    /// for the LiveMeasurement. Also the open `websocket` must be provided.
+    /// The `create_subscription` function establishes a WebSocket connection for a GraphQL subscription request.
+    /// It takes an access token, GraphQL query variables (specific to `LiveMeasurement`), and a WebSocket stream.
+    /// Upon successful connection, it sends an initialization payload with the access token.
+    /// It then subscribes to a GraphQL subscription operation for `LiveMeasurement` data.
     ///
-    /// # Errors
+    /// ## Parameters
+    /// - `access_token`: A string representing the access token used for authentication.
+    /// - `variables`: A data type containing the variables for the GraphQL query (specific to `LiveMeasurement`).
+    /// - `websocket`: A WebSocket connection (type: `WebSocketStream<ConnectStream>`).
+    ///
+    /// ## Returns
+    /// A `Result` containing either:
+    /// - A `Subscription` object that encapsulates the data streams for the subscription.
+    /// - An error of type `graphql_ws_client::Error`.
+    ///
+    /// ## Errors
     ///
     /// Will return an error if the connection init fails.
     ///
