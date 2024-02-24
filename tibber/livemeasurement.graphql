@@ -1,0 +1,34 @@
+subscription LiveMeasurement ($id: ID!) {
+    liveMeasurement(homeId: $id) {
+        timestamp
+        power
+        lastMeterConsumption
+        accumulatedConsumption
+        accumulatedProduction
+        accumulatedConsumptionLastHour
+        accumulatedProductionLastHour
+        accumulatedCost
+        accumulatedReward
+        currency
+        minPower
+        averagePower
+        maxPower
+        powerProduction
+        powerReactive
+        powerProductionReactive
+        minPowerProduction
+        maxPowerProduction
+        lastMeterProduction
+        powerFactor
+        voltagePhase1
+        voltagePhase2
+        voltagePhase3
+        currentPhase1
+        currentL1
+        currentPhase2
+        currentL2
+        currentPhase3
+        currentL3
+        signalStrength
+    }
+}

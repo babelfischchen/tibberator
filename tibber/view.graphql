@@ -1,0 +1,12 @@
+query Viewer {
+    viewer {
+        login
+        userId
+        name
+        accountType
+        homes {
+            id
+        }
+        websocketSubscriptionUrl
+    }
+}
