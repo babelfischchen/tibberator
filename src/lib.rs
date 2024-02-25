@@ -330,8 +330,8 @@ pub mod tibber {
     ///
     /// # #[tokio::main]
     /// # async fn main() {
-    ///   let demo_token = "5K4MVS-OjfWhK_4yrjOlFe1F6kJXPVf7eQYggo8ebAE";
-    ///   let subscription_url = tibber::fetch_subscription_url(demo_token).await.is_ok();
+    ///   let config = tibber::AccessConfig::default();
+    ///   let subscription_url = tibber::fetch_subscription_url(&config).await.is_ok();
     ///   assert!(subscription_url);
     /// # }
     /// ```
