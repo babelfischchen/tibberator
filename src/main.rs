@@ -1,8 +1,10 @@
 use std::{
-    io::{stdout, Write},
+    io::{self, stdin, stdout, Read, Write},
     sync::mpsc::{self, Receiver, RecvTimeoutError},
     time::Duration,
 };
+
+use clap_v3::{App, Arg, ArgMatches};
 
 use chrono::DateTime;
 
@@ -26,7 +28,23 @@ use tibberator::tibber::{
 };
 
 fn get_config() -> Result<AccessConfig, confy::ConfyError> {
-    let config: AccessConfig = confy::load("Tibberator", "config")?;
+    let matches = get_matcher();
+    let app_name = "Tibberator";
+    let config_name = "config";
+
+    if let Some(access_token) = matches.value_of("token") {
+        let mut config: AccessConfig = confy::load("Tibberator", "config")?;
+        config.token = String::from(access_token);
+        confy::store(app_name, config_name, config)?;
+    };
+
+    if let Some(home_id) = matches.value_of("home_id") {
+        let mut config: AccessConfig = confy::load("Tibberator", "config")?;
+        config.home_id = String::from(home_id);
+        confy::store(app_name, config_name, config)?;
+    }
+
+    let config: AccessConfig = confy::load(app_name, config_name)?;
     Ok(config)
 }
 
@@ -47,18 +65,55 @@ async fn main() {
     execute!(stdout(), LeaveAlternateScreen).unwrap();
 
     match subscription {
-        Some(value) => {
-            let stop_result = block_on(value.stop());
-            match stop_result {
-                Ok(()) => std::process::exit(exitcode::OK),
-                Err(error) => {
-                    println!("{:?}", error);
-                    std::process::exit(exitcode::PROTOCOL)
-                }
-            };
+        Ok(result) => match result {
+            Some(value) => {
+                let stop_result = block_on(value.stop());
+                match stop_result {
+                    Ok(()) => std::process::exit(exitcode::OK),
+                    Err(error) => {
+                        println!("{:?}", error);
+                        std::process::exit(exitcode::PROTOCOL)
+                    }
+                };
+            }
+            _ => {}
+        },
+        Err(error) => {
+            println!("{:?}", error);
+            println!("Press Enter to continue...");
+
+            let _ = stdin().read(&mut [0u8]).unwrap();
+            std::process::exit(exitcode::PROTOCOL)
         }
-        _ => {}
     };
+}
+
+fn get_matcher() -> ArgMatches {
+    App::new("Tibberator")
+        .version("0.1.0")
+        .author("Stephan Z. <https://github.com/babelfischchen>")
+        .about(
+            "Tibberator connects to the Tibber API and shows basic usage statistics for your home.
+In order to work properly you need to configure your access_token and home_id in the
+config.yaml found in the Tibberator app_data directory.",
+        )
+        .arg(
+            Arg::with_name("token")
+                .short('t')
+                .long("token")
+                .value_name("access_token")
+                .help("Sets a custom access_token to access your Tibber data.")
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("home_id")
+                .short('h')
+                .long("homeid")
+                .value_name("home_id")
+                .help("Sets a custom home_id to access your Tibber data.")
+                .takes_value(true),
+        )
+        .get_matches()
 }
 
 fn print_screen(data: LiveMeasurementLiveMeasurement) {
@@ -167,14 +222,15 @@ async fn loop_for_data(
         let next_data = time::timeout(Duration::from_secs(1), subscription.next()).await;
         match next_data {
             Ok(item) => {
-                let current_state = item
-                    .unwrap()
-                    .unwrap()
-                    .data
-                    .unwrap()
-                    .live_measurement
-                    .unwrap();
-                print_screen(current_state);
+                if let Some(data) = item.unwrap().unwrap().data {
+                    let current_state = data.live_measurement.unwrap();
+                    print_screen(current_state);
+                } else {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "No valid data received.",
+                    )));
+                }
             }
             Err(_) => {
                 loop_counter += 1;
@@ -196,7 +252,10 @@ async fn loop_for_data(
 async fn subscription_loop(
     config: AccessConfig,
     receiver: Receiver<bool>,
-) -> Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>> {
+) -> Result<
+    Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>,
+    Box<dyn std::error::Error>,
+> {
     let mut subscription = Box::new(
         connect_live_measurement(&config)
             .await
@@ -223,7 +282,7 @@ async fn subscription_loop(
 
                 for _ in 0..=number_of_seconds {
                     if check_user_shutdown(&receiver) == true {
-                        return None;
+                        return Ok(None);
                     }
                     std::thread::sleep(time::Duration::from_secs(1));
                 }
@@ -236,10 +295,15 @@ async fn subscription_loop(
             }
             Err(error) => {
                 println!("\n{:?}", error);
+                if let Some(io_err) = error.downcast_ref::<io::Error>() {
+                    if io_err.kind() == io::ErrorKind::InvalidData {
+                        return Err(error);
+                    }
+                }
                 break;
             }
         }
     }
 
-    Some(subscription)
+    Ok(Some(subscription))
 }

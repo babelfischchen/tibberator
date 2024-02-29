@@ -20,9 +20,9 @@ pub mod tibber {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct AccessConfig {
-        token: String,
+        pub token: String,
         url: String,
-        home_id: String,
+        pub home_id: String,
     }
 
     impl Default for AccessConfig {
