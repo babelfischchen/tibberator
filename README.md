@@ -37,7 +37,7 @@ Remember to replace `<access_token>` and `<home_id>` with actual values when usi
 
 ## Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests on the [GitHub repository](https://github.com/yourusername/tibberator).
+Contributions are welcome! Feel free to open issues or submit pull requests on the [GitHub repository](https://github.com/babelfischchen/tibberator).
 
 ## License
 
