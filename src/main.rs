@@ -214,6 +214,7 @@ async fn connect_live_measurement(
 }
 
 async fn loop_for_data(
+    config: &AccessConfig,
     subscription: &mut Subscription<StreamingOperation<LiveMeasurement>>,
     receiver: &Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -225,6 +226,7 @@ async fn loop_for_data(
                 if let Some(data) = item.unwrap().unwrap().data {
                     let current_state = data.live_measurement.unwrap();
                     print_screen(current_state);
+                    loop_counter = 0;
                 } else {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
@@ -234,7 +236,7 @@ async fn loop_for_data(
             }
             Err(_) => {
                 loop_counter += 1;
-                if loop_counter > 120 {
+                if loop_counter > config.reconnect_timeout {
                     return Ok(());
                 }
             }
@@ -266,7 +268,7 @@ async fn subscription_loop(
     stdout().flush().unwrap();
 
     loop {
-        let final_result = loop_for_data(subscription.as_mut(), &receiver).await;
+        let final_result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
         match final_result {
             Ok(_) => {
                 if let Err(error) = subscription.stop().await {
