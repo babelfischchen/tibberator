@@ -1,7 +1,9 @@
 use std::{
+    cell::Cell,
     io::{self, stdin, stdout, Read, Write},
+    rc::Rc,
     sync::mpsc::{self, Receiver, RecvTimeoutError},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use clap_v3::{App, Arg, ArgMatches};
@@ -17,7 +19,7 @@ use crossterm::{
 };
 use ctrlc::set_handler;
 use exitcode;
-use futures::{executor::block_on, stream::StreamExt};
+use futures::{executor::block_on, future, stream::StreamExt, task::Poll};
 use graphql_ws_client::{graphql::StreamingOperation, Subscription};
 use rand::Rng;
 use tokio::time;
@@ -178,6 +180,7 @@ fn print_screen(data: LiveMeasurementLiveMeasurement) {
     move_cursor(1);
     write!(stdout(), "{:.3} kWh", data.accumulated_production).unwrap();
     execute!(stdout(), cursor::Hide).unwrap();
+    move_cursor(1);
 
     stdout().flush().unwrap();
 }
@@ -196,45 +199,54 @@ fn check_user_shutdown(receiver: &Receiver<bool>) -> bool {
     }
 }
 
+enum EndingReason {
+    Shutdown,
+    Reconnect,
+}
+
 async fn loop_for_data(
     config: &AccessConfig,
     subscription: &mut Subscription<StreamingOperation<LiveMeasurement>>,
     receiver: &Receiver<bool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut loop_counter = 0;
-    loop {
+    let last_value_received = Rc::new(Cell::new(Instant::now()));
+    let stop_fun = future::poll_fn(|_cx| {
         if check_user_shutdown(&receiver) == true {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "Shutdown requested",
-            )));
+            Poll::Ready(EndingReason::Shutdown)
+        } else if last_value_received.get().elapsed().as_secs() > config.reconnect_timeout {
+            Poll::Ready(EndingReason::Reconnect)
+        } else {
+            Poll::Pending
         }
+    });
 
-        let next_data = time::timeout(
-            Duration::from_secs(config.loop_timeout),
-            subscription.next(),
-        )
-        .await;
-        match next_data {
-            Ok(Some(item)) => {
-                let data = item.unwrap().data.unwrap();
+    let mut stream = subscription.take_until(stop_fun);
+    while let Some(result) = stream.by_ref().next().await {
+        match result.unwrap().data {
+            Some(data) => {
                 let current_state = data.live_measurement.unwrap();
+                last_value_received.set(Instant::now());
                 print_screen(current_state);
-                loop_counter = 0;
             }
-            Ok(None) => {
+            None => {
                 return Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "No valid data received.",
                 )));
             }
-            Err(_) => {
-                loop_counter += 1;
-                if loop_counter > config.reconnect_timeout {
-                    return Ok(());
-                }
-            }
         }
+    }
+
+    match stream.take_result() {
+        Some(EndingReason::Shutdown) => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "Shutdown requested",
+        ))),
+        Some(EndingReason::Reconnect) => Ok(()),
+        None => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "No valid data received.",
+        ))),
     }
 }
 

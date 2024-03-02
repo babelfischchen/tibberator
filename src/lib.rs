@@ -23,8 +23,7 @@ pub mod tibber {
         pub token: String,
         url: String,
         pub home_id: String,
-        pub reconnect_timeout: i32,
-        pub loop_timeout: u64,
+        pub reconnect_timeout: u64,
     }
 
     impl Default for AccessConfig {
@@ -34,7 +33,6 @@ pub mod tibber {
                 url: "https://api.tibber.com/v1-beta/gql".to_string(),
                 home_id: "96a14971-525a-4420-aae9-e5aedaa129ff".to_string(),
                 reconnect_timeout: 120,
-                loop_timeout: 1,
             }
         }
     }
