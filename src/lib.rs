@@ -24,6 +24,7 @@ pub mod tibber {
         url: String,
         pub home_id: String,
         pub reconnect_timeout: i32,
+        pub loop_timeout: u64,
     }
 
     impl Default for AccessConfig {
@@ -33,6 +34,7 @@ pub mod tibber {
                 url: "https://api.tibber.com/v1-beta/gql".to_string(),
                 home_id: "96a14971-525a-4420-aae9-e5aedaa129ff".to_string(),
                 reconnect_timeout: 120,
+                loop_timeout: 1,
             }
         }
     }
@@ -411,21 +413,8 @@ pub mod tibber {
     ///
     /// - Returns an error if the websocket connection fails.
     /// - Returns an error if the websocket subscription could not be established.
-    ///
-    /// # Examples
-    ///
     /// ```
-    ///   use tibberator::tibber;
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() {
-    ///   let config = tibber::AccessConfig::default();
-    ///   let subscription = tibber::get_live_measurement(&config).await;
-    ///   assert!(subscription.is_ok());
-    ///   assert!(subscription.unwrap().stop().await.is_ok());
-    /// # }
-    /// ```
-    pub async fn get_live_measurement(
+    async fn get_live_measurement(
         config: &AccessConfig,
     ) -> Result<Subscription<StreamingOperation<LiveMeasurement>>, graphql_ws_client::Error> {
         let id = config.home_id.to_owned();
@@ -441,6 +430,54 @@ pub mod tibber {
                 return Err(graphql_ws_client::Error::Unknown(
                     String::from("Websocket creation error: ") + error.to_string().as_str(),
                 ));
+            }
+        }
+    }
+
+    /// Establishes a connection to the Tibber Subscription websocket for live measurement data.
+    ///
+    /// This function attempts to create a subscription for streaming live measurement data
+    /// from the Tibber service. If successful, it returns a valid `Subscription` containing
+    /// the streaming operation. If an error occurs during the subscription process, an error
+    /// message is printed, and the program exits with the `exitcode::PROTOCOL` status code.
+    ///
+    /// # Arguments
+    ///
+    /// * `config`: A reference to an `AccessConfig` containing the necessary configuration
+    ///   parameters for connecting to the Tibber service.
+    ///
+    /// # Returns
+    ///
+    /// A `Subscription<StreamingOperation<LiveMeasurement>>`:
+    /// - If the connection is established successfully, returns a valid subscription for
+    ///   live measurement data.
+    /// - If an error occurs during the subscription process, the program exits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///   use tibberator::tibber;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    ///   let config = tibber::AccessConfig::default();
+    ///   let subscription = tibber::connect_live_measurement(&config).await;
+    ///   assert!(subscription.stop().await.is_ok());
+    /// # }
+    /// ```
+    pub async fn connect_live_measurement(
+        config: &AccessConfig,
+    ) -> Subscription<StreamingOperation<LiveMeasurement>> {
+        let subscription = get_live_measurement(&config).await;
+
+        match subscription {
+            Ok(result) => {
+                println!("Connection established");
+                result
+            }
+            Err(error) => {
+                println!("{:?}", error);
+                std::process::exit(exitcode::PROTOCOL);
             }
         }
     }
@@ -511,7 +548,7 @@ pub mod tibber {
             use futures::stream::StreamExt;
             let config = AccessConfig::default();
 
-            let mut subscription = get_live_measurement(&config).await.unwrap();
+            let mut subscription = connect_live_measurement(&config).await;
 
             for _ in 1..=5 {
                 let item = subscription.next().await;

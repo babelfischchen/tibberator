@@ -23,7 +23,7 @@ use rand::Rng;
 use tokio::time;
 
 use tibberator::tibber::{
-    get_live_measurement, live_measurement::LiveMeasurementLiveMeasurement, AccessConfig,
+    connect_live_measurement, live_measurement::LiveMeasurementLiveMeasurement, AccessConfig,
     LiveMeasurement,
 };
 
@@ -196,23 +196,6 @@ fn check_user_shutdown(receiver: &Receiver<bool>) -> bool {
     }
 }
 
-async fn connect_live_measurement(
-    config: &AccessConfig,
-) -> Option<Subscription<StreamingOperation<LiveMeasurement>>> {
-    let subscription = get_live_measurement(&config).await;
-
-    match subscription {
-        Ok(result) => {
-            println!("Connection established");
-            Some(result)
-        }
-        Err(error) => {
-            println!("{:?}", error);
-            std::process::exit(exitcode::PROTOCOL);
-        }
-    }
-}
-
 async fn loop_for_data(
     config: &AccessConfig,
     subscription: &mut Subscription<StreamingOperation<LiveMeasurement>>,
@@ -220,19 +203,30 @@ async fn loop_for_data(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut loop_counter = 0;
     loop {
-        let next_data = time::timeout(Duration::from_secs(1), subscription.next()).await;
+        if check_user_shutdown(&receiver) == true {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Shutdown requested",
+            )));
+        }
+
+        let next_data = time::timeout(
+            Duration::from_secs(config.loop_timeout),
+            subscription.next(),
+        )
+        .await;
         match next_data {
-            Ok(item) => {
-                if let Some(data) = item.unwrap().unwrap().data {
-                    let current_state = data.live_measurement.unwrap();
-                    print_screen(current_state);
-                    loop_counter = 0;
-                } else {
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "No valid data received.",
-                    )));
-                }
+            Ok(Some(item)) => {
+                let data = item.unwrap().data.unwrap();
+                let current_state = data.live_measurement.unwrap();
+                print_screen(current_state);
+                loop_counter = 0;
+            }
+            Ok(None) => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No valid data received.",
+                )));
             }
             Err(_) => {
                 loop_counter += 1;
@@ -240,13 +234,6 @@ async fn loop_for_data(
                     return Ok(());
                 }
             }
-        }
-
-        if check_user_shutdown(&receiver) == true {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "Shutdown requested",
-            )));
         }
     }
 }
@@ -258,11 +245,7 @@ async fn subscription_loop(
     Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>,
     Box<dyn std::error::Error>,
 > {
-    let mut subscription = Box::new(
-        connect_live_measurement(&config)
-            .await
-            .expect("Connection to Tibber could not be established."),
-    );
+    let mut subscription = Box::new(connect_live_measurement(&config).await);
 
     write!(stdout(), "Waiting for data ...").unwrap();
     stdout().flush().unwrap();
@@ -289,11 +272,7 @@ async fn subscription_loop(
                     std::thread::sleep(time::Duration::from_secs(1));
                 }
 
-                subscription = Box::new(
-                    connect_live_measurement(&config)
-                        .await
-                        .expect("Connection to Tibber could not be established."),
-                );
+                subscription = Box::new(connect_live_measurement(&config).await);
             }
             Err(error) => {
                 println!("\n{:?}", error);
