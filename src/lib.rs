@@ -8,6 +8,13 @@ pub mod tibber {
         tungstenite::handshake::client::{generate_key, Response},
         WebSocketStream,
     };
+    use chrono::DateTime;
+    use crossterm::{
+        cursor, execute, queue,
+        style::Stylize,
+        terminal::{Clear, ClearType},
+    };
+    use futures::{future, stream::StreamExt, task::Poll};
     use graphql_client::{reqwest::post_graphql, GraphQLQuery};
     use graphql_ws_client::{graphql::StreamingOperation, Client as WSClient, Subscription};
     use http::{request::Builder, Request, Uri};
@@ -16,7 +23,31 @@ pub mod tibber {
         Client,
     };
     use serde::{Deserialize, Serialize};
-    use std::str::FromStr;
+    use std::{
+        cell::Cell,
+        io::{stdout, Write},
+        rc::Rc,
+        str::FromStr,
+        sync::mpsc::{Receiver, RecvTimeoutError},
+        time::{Duration, Instant},
+    };
+    use thiserror::Error;
+
+    #[derive(Debug, Error)]
+    pub enum LoopEndingError {
+        #[error("Shutdown requested")]
+        Shutdown,
+        #[error("Connection timed out. Reconnection necessary.")]
+        Reconnect,
+        #[error("Invalid or no data received.")]
+        InvalidData,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    pub enum OutputType {
+        Full,
+        Silent,
+    }
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct AccessConfig {
@@ -33,6 +64,40 @@ pub mod tibber {
                 url: "https://api.tibber.com/v1-beta/gql".to_string(),
                 home_id: "96a14971-525a-4420-aae9-e5aedaa129ff".to_string(),
                 reconnect_timeout: 120,
+            }
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct OutputConfig {
+        pub output_type: OutputType,
+    }
+
+    impl Default for OutputConfig {
+        fn default() -> Self {
+            OutputConfig {
+                output_type: OutputType::Full,
+            }
+        }
+    }
+
+    impl OutputConfig {
+        fn is_silent(&self) -> bool {
+            self.output_type == OutputType::Silent
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Config {
+        pub access: AccessConfig,
+        pub output: OutputConfig,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::default(),
             }
         }
     }
@@ -480,9 +545,146 @@ pub mod tibber {
         }
     }
 
+    pub fn check_user_shutdown(receiver: &Receiver<bool>) -> bool {
+        let received_value = receiver.recv_timeout(Duration::from_millis(100));
+        match received_value {
+            Ok(value) => value,
+            Err(error) => match error {
+                RecvTimeoutError::Timeout => false,
+                RecvTimeoutError::Disconnected => {
+                    println!("{:?}", error);
+                    true
+                }
+            },
+        }
+    }
+
+    fn print_screen(data: live_measurement::LiveMeasurementLiveMeasurement) {
+        let timestamp = DateTime::parse_from_str(&data.timestamp, "%+").unwrap();
+        let str_timestamp = timestamp.format("%H:%M:%S");
+
+        let mut line_number = 1;
+
+        queue!(
+            stdout(),
+            Clear(ClearType::All),
+            cursor::MoveTo(1, line_number)
+        )
+        .unwrap();
+
+        let mut move_cursor = |increase: u16| {
+            line_number += increase;
+            queue!(stdout(), cursor::MoveTo(1, line_number)).unwrap();
+        };
+
+        let power_production = data.power_production.unwrap_or(0.);
+
+        // time
+        write!(stdout(), "Time:").unwrap();
+        move_cursor(1);
+        write!(stdout(), "{}", str_timestamp).unwrap();
+        move_cursor(2);
+
+        // current power
+        if power_production == 0. {
+            write!(stdout(), "{}", "Current Power consumption:".red()).unwrap();
+            move_cursor(1);
+            write!(stdout(), "{:.1} W", data.power).unwrap();
+        }
+        // current production
+        else {
+            write!(stdout(), "{}", "Current Power production:".green()).unwrap();
+            move_cursor(1);
+            write!(stdout(), "{:.1} W", power_production).unwrap();
+        }
+        // cost today
+        move_cursor(2);
+        write!(stdout(), "Cost today:").unwrap();
+        move_cursor(1);
+        write!(
+            stdout(),
+            "{:.2} {}",
+            data.accumulated_cost.unwrap_or(-1.),
+            data.currency.unwrap_or(String::from("None"))
+        )
+        .unwrap();
+
+        // consumption today
+        move_cursor(2);
+        write!(stdout(), "Consumption today:").unwrap();
+        move_cursor(1);
+        write!(stdout(), "{:.3} kWh", data.accumulated_consumption).unwrap();
+
+        // production today
+        move_cursor(2);
+        write!(stdout(), "Production today:").unwrap();
+        move_cursor(1);
+        write!(stdout(), "{:.3} kWh", data.accumulated_production).unwrap();
+        execute!(stdout(), cursor::Hide).unwrap();
+        move_cursor(1);
+
+        stdout().flush().unwrap();
+    }
+
+    pub async fn loop_for_data(
+        config: &Config,
+        subscription: &mut Subscription<StreamingOperation<LiveMeasurement>>,
+        receiver: &Receiver<bool>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let last_value_received = Rc::new(Cell::new(Instant::now()));
+        let stop_fun = future::poll_fn(|_cx| {
+            if check_user_shutdown(&receiver) == true {
+                Poll::Ready(LoopEndingError::Shutdown)
+            } else if last_value_received.get().elapsed().as_secs()
+                > config.access.reconnect_timeout
+            {
+                Poll::Ready(LoopEndingError::Reconnect)
+            } else {
+                Poll::Pending
+            }
+        });
+
+        if config.output.is_silent() {
+            queue!(stdout(), Clear(ClearType::All), cursor::MoveTo(1, 1)).unwrap();
+            println!("Output silent. Press CTRL+C to exit.");
+        }
+
+        let mut stream = subscription.take_until(stop_fun);
+        while let Some(result) = stream.by_ref().next().await {
+            match result.unwrap().data {
+                Some(data) => {
+                    let current_state = data.live_measurement.unwrap();
+                    last_value_received.set(Instant::now());
+
+                    match config.output.output_type {
+                        OutputType::Full => print_screen(current_state),
+                        _ => (),
+                    };
+                }
+                None => {
+                    return Err(Box::new(LoopEndingError::InvalidData));
+                }
+            }
+        }
+
+        match stream.take_result() {
+            Some(LoopEndingError::Shutdown) => Ok(()),
+            Some(LoopEndingError::Reconnect) => Err(Box::new(LoopEndingError::Reconnect)),
+            _ => Err(Box::new(LoopEndingError::InvalidData)),
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn test_is_silent() {
+            let mut config = OutputConfig::default();
+            assert!(!config.is_silent());
+            config.output_type = OutputType::Silent;
+            assert!(config.is_silent());
+        }
 
         #[tokio::test]
         async fn test_fetch_data() {
