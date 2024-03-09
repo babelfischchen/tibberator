@@ -1,0 +1,6 @@
+subscription LiveMeasurement ($id: ID!) {
+    liveMeasurement(homeId: $id) {
+        timestamp
+        power
+    }
+}

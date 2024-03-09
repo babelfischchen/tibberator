@@ -70,7 +70,7 @@ pub mod tibber {
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct OutputConfig {
-        pub output_type: OutputType,
+        output_type: OutputType,
     }
 
     impl Default for OutputConfig {
@@ -82,8 +82,12 @@ pub mod tibber {
     }
 
     impl OutputConfig {
-        fn is_silent(&self) -> bool {
+        pub fn is_silent(&self) -> bool {
             self.output_type == OutputType::Silent
+        }
+
+        pub fn new(output_type: OutputType) -> Self {
+            OutputConfig { output_type }
         }
     }
 
@@ -545,8 +549,37 @@ pub mod tibber {
         }
     }
 
+    /// # `check_user_shutdown`
+    ///
+    /// ## Description
+    /// This function checks whether the user has requested a shutdown by monitoring a receiver channel.
+    /// It waits for a short duration (1 second) to receive a value from the channel.
+    /// If a value is received within the timeout, it returns the received value (indicating whether the user requested a shutdown).
+    /// Otherwise, it handles the timeout or disconnection error and returns an appropriate boolean value.
+    ///
+    /// ## Parameters
+    /// - `receiver`: A reference to a `Receiver<bool>` channel. This channel is used to receive signals related to user shutdown requests.
+    ///
+    /// ## Return Value
+    /// - `true`: Indicates that the user requested a shutdown.
+    /// - `false`: Indicates that no shutdown request was received within the timeout.
+    ///
+    /// ## Example
+    /// ```
+    ///   use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
+    ///   use std::time::Duration;
+    ///   use tibberator::tibber::check_user_shutdown;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    ///   let (sender, receiver) = channel();
+    ///   assert!(check_user_shutdown(&receiver) == false);
+    ///   sender.send(true).unwrap();
+    ///   assert!(check_user_shutdown(&receiver) == true);
+    /// # }
+    /// ```
     pub fn check_user_shutdown(receiver: &Receiver<bool>) -> bool {
-        let received_value = receiver.recv_timeout(Duration::from_millis(100));
+        let received_value = receiver.recv_timeout(Duration::from_secs(1));
         match received_value {
             Ok(value) => value,
             Err(error) => match error {
@@ -559,6 +592,17 @@ pub mod tibber {
         }
     }
 
+    /// # `print_screen`
+    ///
+    /// Prints a formatted screen display based on the provided `LiveMeasurement` data.
+    ///
+    /// ## Parameters
+    /// - `data`: A `LiveMeasurementLiveMeasurement` struct containing relevant measurement data.
+    ///
+    /// ## Behavior
+    /// - Clears the terminal screen.
+    /// - Displays information related to time, power consumption/production, cost, and energy consumption for today.
+    ///
     fn print_screen(data: live_measurement::LiveMeasurementLiveMeasurement) {
         let timestamp = DateTime::parse_from_str(&data.timestamp, "%+").unwrap();
         let str_timestamp = timestamp.format("%H:%M:%S");
@@ -626,6 +670,43 @@ pub mod tibber {
         stdout().flush().unwrap();
     }
 
+    /// # `loop_for_data`
+    ///
+    /// Asynchronously processes streaming data from a subscription, monitoring for user shutdown requests
+    /// and reconnect conditions. The function takes care of handling timeouts, disconnections, and invalid data.
+    ///
+    /// ## Parameters
+    /// - `config`: A reference to the configuration settings.
+    /// - `subscription`: A mutable reference to the data subscription.
+    /// - `receiver`: A reference to a `Receiver<bool>` channel for monitoring user shutdown requests.
+    ///
+    /// ## Return Value
+    /// - `Ok(())`: Indicates successful completion (shutdown requested).
+    /// - `Err(LoopEndingError::Reconnect)`: Indicates the need to reconnect due to elapsed time.
+    /// - `Err(LoopEndingError::InvalidData)`: Indicates no valid data received during the loop.
+    ///
+    /// ## Example
+    /// ```
+    ///   use std::sync::mpsc::{channel, Receiver};
+    ///   use tibberator::tibber::*;
+    ///   use tokio::time;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    ///   let config = Config {
+    ///       access: AccessConfig::default(),
+    ///       output: OutputConfig::new(OutputType::Full)
+    ///   };
+    ///   let mut subscription = connect_live_measurement(&config.access).await;
+    ///   let (sender, receiver) = channel();
+    ///   tokio::spawn(async move {
+    ///     std::thread::sleep(time::Duration::from_secs(3));
+    ///     sender.send(true).unwrap();
+    ///   });
+    ///   let result = loop_for_data(&config, &mut subscription, &receiver).await;
+    ///   assert!(result.is_ok());
+    /// # }
+    /// ```
     pub async fn loop_for_data(
         config: &Config,
         subscription: &mut Subscription<StreamingOperation<LiveMeasurement>>,
@@ -645,7 +726,6 @@ pub mod tibber {
         });
 
         if config.output.is_silent() {
-            queue!(stdout(), Clear(ClearType::All), cursor::MoveTo(1, 1)).unwrap();
             println!("Output silent. Press CTRL+C to exit.");
         }
 
@@ -770,6 +850,31 @@ pub mod tibber {
 
             let stop_result = subscription.stop().await;
             assert!(stop_result.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_loop_for_data() {
+            use std::sync::mpsc::channel;
+            use tokio::time;
+
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent),
+            };
+            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+
+            let (sender, receiver) = channel();
+            let this_instant = Instant::now();
+            tokio::spawn(async move {
+                while this_instant.elapsed() < time::Duration::from_secs(10) {
+                    tokio::time::sleep(time::Duration::from_millis(500)).await;
+                }
+                sender.send(true).unwrap();
+            });
+
+            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            assert!(result.is_ok());
+            subscription.stop().await.unwrap();
         }
     }
 }
