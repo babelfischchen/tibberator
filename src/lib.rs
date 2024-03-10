@@ -33,7 +33,7 @@ pub mod tibber {
     };
     use thiserror::Error;
 
-    #[derive(Debug, Error)]
+    #[derive(Debug, Error, PartialEq)]
     pub enum LoopEndingError {
         #[error("Shutdown requested")]
         Shutdown,
@@ -757,6 +757,7 @@ pub mod tibber {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::sync::mpsc::channel;
 
         #[test]
         fn test_is_silent() {
@@ -854,7 +855,6 @@ pub mod tibber {
 
         #[tokio::test]
         async fn test_loop_for_data() {
-            use std::sync::mpsc::channel;
             use tokio::time;
 
             let config = Config {
@@ -874,6 +874,44 @@ pub mod tibber {
 
             let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
             assert!(result.is_ok());
+            subscription.stop().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_loop_for_data_invalid_home_id() {
+            let mut config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent),
+            };
+            config.access.home_id.pop();
+            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+
+            let (_sender, receiver) = channel();
+            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            assert!(result.as_ref().is_err());
+            let error = result.err().unwrap();
+            let error_type = error.downcast::<LoopEndingError>();
+            assert!(error_type.is_ok());
+            assert_eq!(*error_type.unwrap(), LoopEndingError::InvalidData);
+            subscription.stop().await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_loop_for_data_connection_timeout() {
+            let mut config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent),
+            };
+            config.access.reconnect_timeout = 0;
+            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+
+            let (_sender, receiver) = channel();
+            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            assert!(result.as_ref().is_err());
+            let error = result.err().unwrap();
+            let error_type = error.downcast::<LoopEndingError>();
+            assert!(error_type.is_ok());
+            assert_eq!(*error_type.unwrap(), LoopEndingError::Reconnect);
             subscription.stop().await.unwrap();
         }
     }
