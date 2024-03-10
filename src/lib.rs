@@ -758,6 +758,7 @@ pub mod tibber {
     mod tests {
         use super::*;
         use std::sync::mpsc::channel;
+        use serial_test::serial;
 
         #[test]
         fn test_is_silent() {
@@ -825,6 +826,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
+        #[serial(connection)]
         async fn test_get_live_measurement() {
             use futures::stream::StreamExt;
             let config = AccessConfig::default();
@@ -854,6 +856,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
+        #[serial(connection)]
         async fn test_loop_for_data() {
             use tokio::time;
 
@@ -878,6 +881,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
+        #[serial(connection)]
         async fn test_loop_for_data_invalid_home_id() {
             let mut config = Config {
                 access: AccessConfig::default(),
@@ -897,6 +901,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
+        #[serial(connection)]
         async fn test_loop_for_data_connection_timeout() {
             let mut config = Config {
                 access: AccessConfig::default(),
