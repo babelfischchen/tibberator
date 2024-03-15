@@ -157,12 +157,10 @@ async fn subscription_loop(
                         handle_reconnect(&config.access, subscription, &receiver).await;
 
                     match subscription_result {
-                        Ok(res) => {
-                            subscription = Box::new(res)
-                        },
+                        Ok(res) => subscription = Box::new(res),
                         Err(LoopEndingError::Shutdown) => {
                             return Ok(None);
-                        },
+                        }
                         Err(error) => {
                             eprintln!("Unexpected error: {:?}", error);
                             return Err(Box::new(error));
@@ -179,4 +177,32 @@ async fn subscription_loop(
     }
 
     Ok(Some(subscription))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{env, sync::mpsc::channel};
+    use tokio::time::sleep;
+
+    fn get_test_config() -> Config {
+        let current_dir = env::current_dir().expect("Failed to get current directory.");
+        let filename = "tests/test-config.toml";
+        let path = current_dir.join(filename);
+        confy::load_path(path).expect("Config file not found.")
+    }
+
+    #[tokio::test]
+    async fn test_subscription_loop() {
+        let config = get_test_config();
+        let (sender, receiver) = channel();
+        let subscription = subscription_loop(config, receiver);
+        sleep(time::Duration::from_secs(5)).await;
+        sender.send(true).unwrap();
+        let subscription = subscription.await;
+        assert!(subscription.as_ref().is_ok());
+        let result = subscription.unwrap();
+        assert!(result.is_some());
+        assert!(result.unwrap().stop().await.is_ok());
+    }
 }

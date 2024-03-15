@@ -826,7 +826,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
-        #[serial(connection)]
+        #[serial]
         async fn test_get_live_measurement() {
             use futures::stream::StreamExt;
             let config = AccessConfig::default();
@@ -856,7 +856,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
-        #[serial(connection)]
+        #[serial]
         async fn test_loop_for_data() {
             use tokio::time;
 
@@ -867,21 +867,16 @@ pub mod tibber {
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
 
             let (sender, receiver) = channel();
-            let this_instant = Instant::now();
-            tokio::spawn(async move {
-                while this_instant.elapsed() < time::Duration::from_secs(10) {
-                    tokio::time::sleep(time::Duration::from_millis(500)).await;
-                }
-                sender.send(true).unwrap();
-            });
-
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            let result = loop_for_data(&config, subscription.as_mut(), &receiver);
+            tokio::time::sleep(time::Duration::from_secs(10)).await;
+            sender.send(true).unwrap();
+            let result = result.await;
             assert!(result.is_ok());
             subscription.stop().await.unwrap();
         }
 
         #[tokio::test]
-        #[serial(connection)]
+        #[serial]
         async fn test_loop_for_data_invalid_home_id() {
             let mut config = Config {
                 access: AccessConfig::default(),
@@ -901,7 +896,7 @@ pub mod tibber {
         }
 
         #[tokio::test]
-        #[serial(connection)]
+        #[serial]
         async fn test_loop_for_data_connection_timeout() {
             let mut config = Config {
                 access: AccessConfig::default(),
