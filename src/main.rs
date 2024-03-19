@@ -20,6 +20,16 @@ use tokio::time;
 
 use tibberator::tibber::*;
 
+/// Retrieves the configuration settings for the Tibberator application.
+///
+/// This function reads configuration values from command-line arguments and stores them using the `confy` crate.
+/// It returns a `Result<Config, confy::ConfyError>` containing the loaded configuration.
+///
+/// # Errors
+/// Returns a `Result<Config, confy::ConfyError>`:
+/// - `Ok(config)`: Successfully loaded the configuration.
+/// - `Err(error)`: An error occurred during configuration loading or storage.
+///
 fn get_config() -> Result<Config, confy::ConfyError> {
     let matches = get_matcher();
     let app_name = "Tibberator";
@@ -44,6 +54,13 @@ fn get_config() -> Result<Config, confy::ConfyError> {
 #[tokio::main]
 async fn main() {
     let config = get_config().expect("Config file must be loaded.");
+    if !block_on(check_home_id(&config.access)) {
+            eprintln!("Home ID not found for specified access token");
+            println!("Press Enter to continue...");
+
+            let _ = stdin().read(&mut [0u8]).unwrap();
+            std::process::exit(exitcode::DATAERR)
+    }
 
     execute!(stdout(), EnterAlternateScreen, cursor::Hide).unwrap();
 
@@ -109,13 +126,54 @@ config.yaml found in the Tibberator app_data directory.",
         .get_matches()
 }
 
+/// Checks if the given `home_id` exists in the list of home IDs obtained from the `AccessConfig`.
+///
+/// # Arguments
+/// - `access_config`: A reference to an `AccessConfig` containing the necessary configuration.
+///
+/// # Returns
+/// - `true` if the `home_id` exists in the list of home IDs, otherwise `false`.
+/// 
+async fn check_home_id(access_config: &AccessConfig) -> bool {
+    match get_home_ids(&access_config).await {
+        Ok(home_ids) => home_ids.contains(&access_config.home_id),
+        Err(error) => {
+            eprintln!("{:?}", error);
+            println!("Press Enter to continue...");
+            let _ = stdin().read(&mut [0u8]).unwrap();
+            std::process::exit(exitcode::DATAERR);
+        }
+    }
+}
+
+/// Handles reconnection logic for a live measurement subscription.
+///
+/// This asynchronous function takes the following parameters:
+/// - `access_config`: A reference to an `AccessConfig` struct containing access configuration details.
+/// - `subscription`: A boxed `Subscription<StreamingOperation<LiveMeasurement>>` representing the existing subscription.
+/// - `receiver`: A reference to a `Receiver<bool>` used for checking user shutdown signals.
+///
+/// The function performs the following steps:
+/// 1. Stops the existing subscription using `subscription.stop().await`.
+/// 2. Prints any error encountered during subscription stopping.
+/// 3. Exits the process with an exit code of `exitcode::PROTOCOL` if an error occurred.
+/// 4. Generates a random number of seconds (between 1 and 60) to wait before reconnecting.
+/// 5. Prints a message indicating the waiting time.
+/// 6. Loops for the specified number of seconds, checking for user shutdown signals.
+/// 7. If a shutdown signal is received, returns an `Err(LoopEndingError::Shutdown)`.
+/// 8. Otherwise, reconnects by calling `connect_live_measurement(&access_config).await`.
+///
+/// # Errors
+/// Returns an `Err(LoopEndingError::Shutdown)` if the user initiates a shutdown during the waiting period.
+/// Otherwise, returns a `Result<Subscription<StreamingOperation<LiveMeasurement>>, LoopEndingError>`.
+///
 async fn handle_reconnect(
     access_config: &AccessConfig,
     subscription: Box<Subscription<StreamingOperation<LiveMeasurement>>>,
     receiver: &Receiver<bool>,
 ) -> Result<Subscription<StreamingOperation<LiveMeasurement>>, LoopEndingError> {
     if let Err(error) = subscription.stop().await {
-        println!("{:?}", error);
+        eprintln!("{:?}", error);
         std::process::exit(exitcode::PROTOCOL)
     };
 
@@ -135,6 +193,32 @@ async fn handle_reconnect(
     Ok(connect_live_measurement(&access_config).await)
 }
 
+/// Handles the main subscription loop for receiving live measurement data.
+///
+/// This asynchronous function takes the following parameters:
+/// - `config`: A `Config` struct containing configuration details.
+/// - `receiver`: A `Receiver<bool>` used for checking user shutdown signals.
+///
+/// The function performs the following steps:
+/// 1. Initializes a subscription by connecting to live measurement data using `connect_live_measurement(&config.access).await`.
+/// 2. Prints a message indicating that it is waiting for data.
+/// 3. Enters a loop to continuously process data:
+///    - Calls `loop_for_data(&config, subscription.as_mut(), &receiver).await`.
+///    - Handles different error scenarios:
+///      - If the loop ends due to successful data processing, breaks out of the loop.
+///      - If the loop ends due to a reconnect signal, calls `handle_reconnect(&config.access, subscription, &receiver).await`.
+///        - If reconnection is successful, updates the subscription.
+///        - If the user initiates a shutdown during reconnection, returns `Ok(None)`.
+///        - If an unexpected error occurs during reconnection, prints an error message and returns an error.
+///      - If the loop ends due to invalid data, returns the error.
+///      - If an unexpected error occurs, prints an error message and returns an error.
+///
+/// # Errors
+/// Returns a `Result<Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>, Box<dyn std::error::Error>>`:
+/// - `Ok(Some(subscription))`: Successfully processed data, returning the updated subscription.
+/// - `Ok(None)`: User initiated shutdown during reconnection.
+/// - `Err(error)`: An error occurred during data processing or reconnection.
+///
 async fn subscription_loop(
     config: Config,
     receiver: Receiver<bool>,
@@ -204,5 +288,13 @@ mod tests {
         let result = subscription.unwrap();
         assert!(result.is_some());
         assert!(result.unwrap().stop().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_home_id() {
+        let mut config = get_test_config();
+        assert!(check_home_id(&config.access).await);
+        config.access.home_id.pop();
+        assert!(!check_home_id(&config.access).await);
     }
 }
