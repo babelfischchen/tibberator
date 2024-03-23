@@ -8,7 +8,7 @@ pub mod tibber {
         tungstenite::handshake::client::{generate_key, Response},
         WebSocketStream,
     };
-    use chrono::DateTime;
+    use chrono::{DateTime, Duration, FixedOffset, Utc};
     use crossterm::{
         cursor, execute, queue,
         style::Stylize,
@@ -29,7 +29,7 @@ pub mod tibber {
         rc::Rc,
         str::FromStr,
         sync::mpsc::{Receiver, RecvTimeoutError},
-        time::{Duration, Instant},
+        time::Instant,
     };
     use thiserror::Error;
 
@@ -129,6 +129,68 @@ pub mod tibber {
         respone_derives = "Debug"
     )]
     pub struct LiveMeasurement;
+
+    #[derive(GraphQLQuery)]
+    #[graphql(
+        schema_path = "tibber/schema.json",
+        query_path = "tibber/price_current.graphql",
+        respone_derives = "Debug"
+    )]
+    struct PriceCurrent;
+
+    #[derive(Debug, Clone)]
+    pub enum PriceLevel {
+        VeryCheap,
+        Cheap,
+        Normal,
+        Expensive,
+        VeryExpensive,
+        Other(String),
+        None,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct PriceInfo {
+        pub total: f64,
+        pub energy: f64,
+        pub tax: f64,
+        pub starts_at: DateTime<FixedOffset>,
+        pub currency: String,
+        pub level: PriceLevel,
+    }
+
+    impl PriceInfo {
+        fn new_current(
+            price_info: price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent,
+        ) -> Option<Self> {
+            let total = price_info.total?;
+            let energy = price_info.energy?;
+            let tax = price_info.tax?;
+            let starts_at = chrono::DateTime::parse_from_rfc3339(
+                price_info.starts_at.ok_or("No timestamp").ok()?.as_str(),
+            )
+            .ok()?;
+
+            let price_level = match price_info.level {
+                Some(price_current::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
+                Some(price_current::PriceLevel::CHEAP) => PriceLevel::Cheap,
+                Some(price_current::PriceLevel::NORMAL) => PriceLevel::Normal,
+                Some(price_current::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
+                Some(price_current::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
+                Some(price_current::PriceLevel::Other(string)) => PriceLevel::Other(string),
+                _ => PriceLevel::None,
+            };
+
+            Some(PriceInfo {
+                total,
+                energy,
+                tax,
+                starts_at,
+                currency: price_info.currency,
+                level: price_level,
+            })
+        }
+    }
 
     /// # create_client
     ///
@@ -285,6 +347,44 @@ pub mod tibber {
         let variables = home::Variables { id };
 
         fetch_data::<Home>(config, variables).await
+    }
+
+    async fn get_current_energy_price(
+        config: &AccessConfig,
+    ) -> Result<PriceInfo, Box<dyn std::error::Error>> {
+        let id = config.home_id.to_owned();
+        let variables = price_current::Variables { id };
+        let price_data_response = fetch_data::<PriceCurrent>(config, variables).await?;
+        let price_info = price_data_response
+            .data
+            .ok_or(LoopEndingError::InvalidData)?
+            .viewer
+            .home
+            .current_subscription
+            .ok_or(LoopEndingError::InvalidData)?
+            .price_info
+            .ok_or(LoopEndingError::InvalidData)?;
+        PriceInfo::new_current(price_info.current.ok_or(LoopEndingError::InvalidData)?)
+            .ok_or(Box::new(LoopEndingError::InvalidData))
+    }
+
+    async fn update_current_energy_price_info(
+        config: &AccessConfig,
+        current_price_info: Option<PriceInfo>,
+    ) -> Result<PriceInfo, Box<dyn std::error::Error>> {
+        match current_price_info {
+            Some(price_info) => {
+                let datetime_now = Utc::now();
+                let elapsed_time = datetime_now.signed_duration_since(price_info.starts_at);
+
+                if elapsed_time > Duration::seconds(3600) {
+                    get_current_energy_price(config).await
+                } else {
+                    Ok(price_info)
+                }
+            }
+            None => get_current_energy_price(config).await,
+        }
     }
 
     /// Gets all Viewer data
@@ -579,7 +679,7 @@ pub mod tibber {
     /// # }
     /// ```
     pub fn check_user_shutdown(receiver: &Receiver<bool>) -> bool {
-        let received_value = receiver.recv_timeout(Duration::from_secs(1));
+        let received_value = receiver.recv_timeout(std::time::Duration::from_secs(1));
         match received_value {
             Ok(value) => value,
             Err(error) => match error {
@@ -603,7 +703,10 @@ pub mod tibber {
     /// - Clears the terminal screen.
     /// - Displays information related to time, power consumption/production, cost, and energy consumption for today.
     ///
-    fn print_screen(data: live_measurement::LiveMeasurementLiveMeasurement) {
+    fn print_screen(
+        data: live_measurement::LiveMeasurementLiveMeasurement,
+        price_info: &PriceInfo,
+    ) {
         let timestamp = DateTime::parse_from_str(&data.timestamp, "%+").unwrap();
         let str_timestamp = timestamp.format("%H:%M:%S");
 
@@ -641,6 +744,16 @@ pub mod tibber {
             move_cursor(1);
             write!(stdout(), "{:.1} W", power_production).unwrap();
         }
+
+        // current price
+        write!(
+            stdout(),
+            "\t ({:.3} {} / kWh)",
+            price_info.total,
+            price_info.currency
+        )
+        .unwrap();
+
         // cost today
         move_cursor(2);
         write!(stdout(), "Cost today:").unwrap();
@@ -729,6 +842,8 @@ pub mod tibber {
             println!("Output silent. Press CTRL+C to exit.");
         }
 
+        let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
+
         let mut stream = subscription.take_until(stop_fun);
         while let Some(result) = stream.by_ref().next().await {
             match result.unwrap().data {
@@ -737,9 +852,12 @@ pub mod tibber {
                     last_value_received.set(Instant::now());
 
                     match config.output.output_type {
-                        OutputType::Full => print_screen(current_state),
+                        OutputType::Full => print_screen(current_state, &current_price_info),
                         _ => (),
                     };
+                    current_price_info =
+                        update_current_energy_price_info(&config.access, Some(current_price_info))
+                            .await?;
                 }
                 None => {
                     return Err(Box::new(LoopEndingError::InvalidData));
@@ -757,8 +875,8 @@ pub mod tibber {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use std::sync::mpsc::channel;
         use serial_test::serial;
+        use std::sync::mpsc::channel;
 
         #[test]
         fn test_is_silent() {
@@ -813,6 +931,22 @@ pub mod tibber {
             let home_id = home_ids.last();
             assert!(home_id.is_some());
             assert_eq!(home_id.unwrap(), "96a14971-525a-4420-aae9-e5aedaa129ff");
+        }
+
+        #[tokio::test]
+        async fn test_get_price_current() {
+            let config = AccessConfig::default();
+            let id = config.home_id.to_owned();
+            let variables = price_current::Variables { id };
+
+            let result = fetch_data::<PriceCurrent>(&config, variables).await;
+            assert!(result.is_ok());
+
+            let result2 = get_current_energy_price(&config).await;
+            assert!(result2.is_ok());
+
+            let result3 = update_current_energy_price_info(&config, None).await;
+            assert!(result3.is_ok());
         }
 
         #[tokio::test]
