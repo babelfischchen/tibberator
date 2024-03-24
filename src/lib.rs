@@ -11,7 +11,7 @@ pub mod tibber {
     use chrono::{DateTime, Duration, FixedOffset, Utc};
     use crossterm::{
         cursor, execute, queue,
-        style::Stylize,
+        style::{self, SetForegroundColor, Stylize},
         terminal::{Clear, ClearType},
     };
     use futures::{future, stream::StreamExt, task::Poll};
@@ -138,8 +138,8 @@ pub mod tibber {
     )]
     struct PriceCurrent;
 
-    #[derive(Debug, Clone)]
-    pub enum PriceLevel {
+    #[derive(Debug, Clone, PartialEq)]
+    enum PriceLevel {
         VeryCheap,
         Cheap,
         Normal,
@@ -149,14 +149,44 @@ pub mod tibber {
         None,
     }
 
-    #[derive(Debug, Clone)]
-    pub struct PriceInfo {
-        pub total: f64,
-        pub energy: f64,
-        pub tax: f64,
-        pub starts_at: DateTime<FixedOffset>,
-        pub currency: String,
-        pub level: PriceLevel,
+    impl Default for PriceLevel {
+        fn default() -> Self {
+            PriceLevel::None
+        }
+    }
+
+    impl PriceLevel {
+        /// Converts a `PriceLevel` variant to a corresponding text color using crossterm.
+        ///
+        /// ## Arguments
+        ///
+        /// * `self`: The `PriceLevel` variant to convert.
+        ///
+        /// ## Returns
+        ///
+        /// * `Option<crossterm::style::Color>`: The text color associated with the given `PriceLevel`,
+        ///   or `None` if no color is defined.
+        ///
+        fn to_color(&self) -> Option<crossterm::style::Color> {
+            match self {
+                PriceLevel::VeryCheap => Some(style::Color::DarkGreen),
+                PriceLevel::Cheap => Some(style::Color::Green),
+                PriceLevel::Normal => Some(style::Color::Yellow),
+                PriceLevel::Expensive => Some(style::Color::Red),
+                PriceLevel::VeryExpensive => Some(style::Color::DarkRed),
+                _ => None,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct PriceInfo {
+        total: f64,
+        energy: f64,
+        tax: f64,
+        starts_at: DateTime<FixedOffset>,
+        currency: String,
+        level: PriceLevel,
     }
 
     impl PriceInfo {
@@ -349,6 +379,20 @@ pub mod tibber {
         fetch_data::<Home>(config, variables).await
     }
 
+    /// Retrieves the current energy price information based on the provided configuration.
+    ///
+    /// This asynchronous function fetches data using the given `config` and constructs a `PriceInfo`
+    /// struct representing the current energy price. If successful, it returns the `PriceInfo`.
+    /// Otherwise, it returns an error wrapped in a `Box<dyn std::error::Error>`.
+    ///
+    /// ## Arguments
+    ///
+    /// * `config`: A reference to the `AccessConfig` containing necessary information for fetching data.
+    ///
+    /// ## Returns
+    ///
+    /// * `Result<PriceInfo, Box<dyn std::error::Error>>`: The current energy price information or an error.
+    ///
     async fn get_current_energy_price(
         config: &AccessConfig,
     ) -> Result<PriceInfo, Box<dyn std::error::Error>> {
@@ -368,6 +412,21 @@ pub mod tibber {
             .ok_or(Box::new(LoopEndingError::InvalidData))
     }
 
+    /// Updates or retrieves the current energy price information based on the provided configuration and existing price info.
+    ///
+    /// This asynchronous function checks the elapsed time since the `starts_at` timestamp in the `current_price_info`.
+    /// If the elapsed time is greater than 1 hour (3600 seconds), it fetches the current energy price using the `get_current_energy_price` method.
+    /// Otherwise, it returns the existing `current_price_info`.
+    ///
+    /// ## Arguments
+    ///
+    /// * `config`: A reference to the `AccessConfig` containing necessary information for fetching data.
+    /// * `current_price_info`: An optional `PriceInfo` representing the existing price information (if available).
+    ///
+    /// ## Returns
+    ///
+    /// * `Result<PriceInfo, Box<dyn std::error::Error>>`: The updated or existing current energy price information, or an error.
+    ///
     async fn update_current_energy_price_info(
         config: &AccessConfig,
         current_price_info: Option<PriceInfo>,
@@ -377,7 +436,7 @@ pub mod tibber {
                 let datetime_now = Utc::now();
                 let elapsed_time = datetime_now.signed_duration_since(price_info.starts_at);
 
-                if elapsed_time > Duration::seconds(3600) {
+                if elapsed_time > Duration::try_seconds(3600).unwrap() {
                     get_current_energy_price(config).await
                 } else {
                     Ok(price_info)
@@ -746,11 +805,19 @@ pub mod tibber {
         }
 
         // current price
-        write!(
+        execute!(
             stdout(),
-            "\t ({:.3} {} / kWh)",
-            price_info.total,
-            price_info.currency
+            SetForegroundColor(
+                price_info
+                    .level
+                    .to_color()
+                    .unwrap_or(crossterm::style::Color::White)
+            ),
+            crossterm::style::Print(format!(
+                "\t ({:.3} {} / kWh)",
+                price_info.total, price_info.currency
+            )),
+            crossterm::style::ResetColor
         )
         .unwrap();
 
@@ -947,6 +1014,42 @@ pub mod tibber {
 
             let result3 = update_current_energy_price_info(&config, None).await;
             assert!(result3.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_update_price_after_one_hour() {
+            let config = AccessConfig::default();
+
+            let price_info = PriceInfo::default();
+            assert!(price_info.starts_at == DateTime::<FixedOffset>::default());
+            let result_initial_update =
+                update_current_energy_price_info(&config, Some(price_info)).await;
+            assert!(result_initial_update.is_ok());
+            let result_initial_update = result_initial_update.unwrap();
+            assert_ne!(result_initial_update, PriceInfo::default());
+            assert!(result_initial_update.starts_at > DateTime::<FixedOffset>::default());
+
+            // time within one hour
+            let price_info_within_an_hour = result_initial_update.clone();
+            let updated_price_info_within_hour =
+                update_current_energy_price_info(&config, Some(price_info_within_an_hour)).await;
+            assert!(updated_price_info_within_hour.is_ok());
+            assert_eq!(
+                updated_price_info_within_hour.unwrap(),
+                result_initial_update
+            );
+
+            // set time one hour lower
+            let mut price_info_one_hour_before = result_initial_update.clone();
+            let new_time = price_info_one_hour_before.starts_at - Duration::try_hours(1).unwrap();
+            price_info_one_hour_before.starts_at = new_time;
+            let updated_price_info_after_one_hour =
+                update_current_energy_price_info(&config, Some(price_info_one_hour_before)).await;
+            assert!(updated_price_info_after_one_hour.is_ok());
+            assert_ne!(
+                updated_price_info_after_one_hour.unwrap().starts_at,
+                new_time
+            );
         }
 
         #[tokio::test]
