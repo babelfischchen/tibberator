@@ -46,6 +46,7 @@ pub mod tibber {
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     pub enum OutputType {
         Full,
+        NoTaxInfo,
         Silent,
     }
 
@@ -763,9 +764,18 @@ pub mod tibber {
     /// - Displays information related to time, power consumption/production, cost, and energy consumption for today.
     ///
     fn print_screen(
+        output_type: &OutputType,
         data: live_measurement::LiveMeasurementLiveMeasurement,
         price_info: &PriceInfo,
     ) {
+        let tax_string = match output_type {
+            OutputType::Full => format!(" Tax: {:.3} {}/kWh", price_info.tax, price_info.currency),
+            OutputType::NoTaxInfo => "".to_string(),
+            OutputType::Silent => {
+                return;
+            }
+        };
+
         let timestamp = DateTime::parse_from_str(&data.timestamp, "%+").unwrap();
         let str_timestamp = timestamp.format("%H:%M:%S");
 
@@ -778,35 +788,37 @@ pub mod tibber {
         )
         .unwrap();
 
-        let mut move_cursor = |increase: u16| {
-            line_number += increase;
-            queue!(stdout(), cursor::MoveTo(1, line_number)).unwrap();
+        let mut move_cursor = |row_increase: u16, column: Option<u16>| {
+            line_number += row_increase;
+            queue!(stdout(), cursor::MoveTo(column.unwrap_or(1), line_number)).unwrap();
         };
 
         let power_production = data.power_production.unwrap_or(0.);
 
         // time
         write!(stdout(), "Time:").unwrap();
-        move_cursor(1);
+        move_cursor(1, None);
         write!(stdout(), "{}", str_timestamp).unwrap();
-        move_cursor(2);
+        move_cursor(2, None);
 
         // current power
         if power_production == 0. {
             write!(stdout(), "{}", "Current Power consumption:".red()).unwrap();
-            move_cursor(1);
+            move_cursor(1, None);
             write!(stdout(), "{:.1} W", data.power).unwrap();
         }
         // current production
         else {
             write!(stdout(), "{}", "Current Power production:".green()).unwrap();
-            move_cursor(1);
+            move_cursor(1, None);
             write!(stdout(), "{:.1} W", power_production).unwrap();
         }
 
         // current price
+        move_cursor(0, Some(10));
         execute!(
             stdout(),
+            crossterm::style::Print("("),
             SetForegroundColor(
                 price_info
                     .level
@@ -814,17 +826,18 @@ pub mod tibber {
                     .unwrap_or(crossterm::style::Color::White)
             ),
             crossterm::style::Print(format!(
-                "\t ({:.3} {} / kWh)",
+                "{:.3} {}/kWh",
                 price_info.total, price_info.currency
             )),
-            crossterm::style::ResetColor
+            crossterm::style::ResetColor,
+            crossterm::style::Print(format!("{})", tax_string))
         )
         .unwrap();
 
         // cost today
-        move_cursor(2);
+        move_cursor(2, None);
         write!(stdout(), "Cost today:").unwrap();
-        move_cursor(1);
+        move_cursor(1, None);
         write!(
             stdout(),
             "{:.2} {}",
@@ -834,18 +847,18 @@ pub mod tibber {
         .unwrap();
 
         // consumption today
-        move_cursor(2);
+        move_cursor(2, None);
         write!(stdout(), "Consumption today:").unwrap();
-        move_cursor(1);
+        move_cursor(1, None);
         write!(stdout(), "{:.3} kWh", data.accumulated_consumption).unwrap();
 
         // production today
-        move_cursor(2);
+        move_cursor(2, None);
         write!(stdout(), "Production today:").unwrap();
-        move_cursor(1);
+        move_cursor(1, None);
         write!(stdout(), "{:.3} kWh", data.accumulated_production).unwrap();
         execute!(stdout(), cursor::Hide).unwrap();
-        move_cursor(1);
+        move_cursor(1, None);
 
         stdout().flush().unwrap();
     }
@@ -906,7 +919,7 @@ pub mod tibber {
         });
 
         if config.output.is_silent() {
-            println!("Output silent. Press CTRL+C to exit.");
+            println!("\nOutput silent. Press CTRL+C to exit.");
         }
 
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
@@ -918,10 +931,12 @@ pub mod tibber {
                     let current_state = data.live_measurement.unwrap();
                     last_value_received.set(Instant::now());
 
-                    match config.output.output_type {
-                        OutputType::Full => print_screen(current_state, &current_price_info),
-                        _ => (),
-                    };
+                    print_screen(
+                        &config.output.output_type,
+                        current_state,
+                        &current_price_info,
+                    );
+
                     current_price_info =
                         update_current_energy_price_info(&config.access, Some(current_price_info))
                             .await?;
