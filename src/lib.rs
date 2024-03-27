@@ -46,8 +46,14 @@ pub mod tibber {
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     pub enum OutputType {
         Full,
-        NoTaxInfo,
         Silent,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    pub enum TaxStyle {
+        Price,
+        Percent,
+        None,
     }
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -72,12 +78,14 @@ pub mod tibber {
     #[derive(Debug, Serialize, Deserialize)]
     pub struct OutputConfig {
         output_type: OutputType,
+        tax_style: TaxStyle,
     }
 
     impl Default for OutputConfig {
         fn default() -> Self {
             OutputConfig {
                 output_type: OutputType::Full,
+                tax_style: TaxStyle::Price,
             }
         }
     }
@@ -88,7 +96,10 @@ pub mod tibber {
         }
 
         pub fn new(output_type: OutputType) -> Self {
-            OutputConfig { output_type }
+            OutputConfig {
+                output_type,
+                tax_style: TaxStyle::None,
+            }
         }
     }
 
@@ -757,21 +768,23 @@ pub mod tibber {
     /// Prints a formatted screen display based on the provided `LiveMeasurement` data.
     ///
     /// ## Parameters
+    /// - `tax_style`: The format of the tax output.
     /// - `data`: A `LiveMeasurementLiveMeasurement` struct containing relevant measurement data.
+    /// - `price_info`: Data about the current price level
     ///
     /// ## Behavior
     /// - Clears the terminal screen.
     /// - Displays information related to time, power consumption/production, cost, and energy consumption for today.
     ///
     fn print_screen(
-        output_type: &OutputType,
+        tax_style: &TaxStyle,
         data: live_measurement::LiveMeasurementLiveMeasurement,
         price_info: &PriceInfo,
     ) {
-        let tax_string = match output_type {
-            OutputType::Full => format!(" Tax: {:.3} {}/kWh", price_info.tax, price_info.currency),
-            OutputType::NoTaxInfo => "".to_string(),
-            OutputType::Silent => {
+        let tax_string = match tax_style {
+            TaxStyle::Price => format!(" Tax: {:.3} {}/kWh", price_info.tax, price_info.currency),
+            TaxStyle::Percent => format!(" Tax: {:.1} %", price_info.tax / price_info.total * 100.),
+            TaxStyle::None => {
                 return;
             }
         };
@@ -931,11 +944,9 @@ pub mod tibber {
                     let current_state = data.live_measurement.unwrap();
                     last_value_received.set(Instant::now());
 
-                    print_screen(
-                        &config.output.output_type,
-                        current_state,
-                        &current_price_info,
-                    );
+                    if !config.output.is_silent() {
+                        print_screen(&config.output.tax_style, current_state, &current_price_info);
+                    }
 
                     current_price_info =
                         update_current_energy_price_info(&config.access, Some(current_price_info))
