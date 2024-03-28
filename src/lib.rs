@@ -938,26 +938,42 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         let mut stream = subscription.take_until(stop_fun);
-        while let Some(result) = stream.by_ref().next().await {
-            match result.unwrap().data {
-                Some(data) => {
-                    let current_state = data.live_measurement.unwrap();
-                    last_value_received.set(Instant::now());
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(2 * config.access.reconnect_timeout),
+                stream.by_ref().next(),
+            )
+            .await
+            {
+                Ok(Some(result)) => match result.unwrap().data {
+                    Some(data) => {
+                        let current_state = data.live_measurement.unwrap();
+                        last_value_received.set(Instant::now());
 
-                    if !config.output.is_silent() {
-                        print_screen(&config.output.tax_style, current_state, &current_price_info);
+                        if !config.output.is_silent() {
+                            print_screen(
+                                &config.output.tax_style,
+                                current_state,
+                                &current_price_info,
+                            );
+                        }
+
+                        current_price_info = update_current_energy_price_info(
+                            &config.access,
+                            Some(current_price_info),
+                        )
+                        .await?;
                     }
-
-                    current_price_info =
-                        update_current_energy_price_info(&config.access, Some(current_price_info))
-                            .await?;
-                }
-                None => {
-                    return Err(Box::new(LoopEndingError::InvalidData));
+                    None => {
+                        return Err(Box::new(LoopEndingError::InvalidData));
+                    }
+                },
+                Ok(None) => break,
+                Err(_) => {
+                    return Err(Box::new(LoopEndingError::Reconnect));
                 }
             }
         }
-
         match stream.take_result() {
             Some(LoopEndingError::Shutdown) => Ok(()),
             Some(LoopEndingError::Reconnect) => Err(Box::new(LoopEndingError::Reconnect)),
@@ -970,6 +986,7 @@ pub mod tibber {
         use super::*;
         use serial_test::serial;
         use std::sync::mpsc::channel;
+        use tokio::time::timeout;
 
         #[test]
         fn test_is_silent() {
@@ -1097,7 +1114,9 @@ pub mod tibber {
             let mut subscription = connect_live_measurement(&config).await;
 
             for _ in 1..=5 {
-                let item = subscription.next().await;
+                let result = timeout(std::time::Duration::from_secs(30), subscription.next()).await;
+                assert!(result.is_ok());
+                let item = result.unwrap();
                 if item.is_none() {
                     break;
                 }
@@ -1133,8 +1152,9 @@ pub mod tibber {
             let result = loop_for_data(&config, subscription.as_mut(), &receiver);
             tokio::time::sleep(time::Duration::from_secs(10)).await;
             sender.send(true).unwrap();
-            let result = result.await;
+            let result = timeout(std::time::Duration::from_secs(30), result).await;
             assert!(result.is_ok());
+            assert!(result.unwrap().is_ok());
             subscription.stop().await.unwrap();
         }
 
@@ -1149,7 +1169,13 @@ pub mod tibber {
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
 
             let (_sender, receiver) = channel();
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            let result = timeout(
+                std::time::Duration::from_secs(10),
+                loop_for_data(&config, subscription.as_mut(), &receiver),
+            )
+            .await;
+            assert!(result.is_ok());
+            let result = result.unwrap();
             assert!(result.as_ref().is_err());
             let error = result.err().unwrap();
             let error_type = error.downcast::<LoopEndingError>();
