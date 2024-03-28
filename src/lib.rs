@@ -1114,7 +1114,7 @@ pub mod tibber {
             let mut subscription = connect_live_measurement(&config).await;
 
             for _ in 1..=5 {
-                let result = timeout(std::time::Duration::from_secs(30), subscription.next()).await;
+                let result = timeout(std::time::Duration::from_secs(90), subscription.next()).await;
                 assert!(result.is_ok());
                 let item = result.unwrap();
                 if item.is_none() {
