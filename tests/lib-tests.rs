@@ -8,13 +8,16 @@ mod lib_tests {
     use futures::StreamExt;
 
     use crate::mock_subscription::{self, SubscriptionServer};
-    use graphql_ws_client::{graphql::StreamingOperation, Client, Subscription};
+    use graphql_ws_client::{graphql::StreamingOperation, Client};
     use http::HeaderValue;
     use std::sync::mpsc;
     use tibberator::tibber::{
-        live_measurement, loop_for_data, Config, LiveMeasurement,
+        data_handling::{live_measurement, LiveMeasurement, LiveMeasurementSubscription},
+        loop_for_data, Config,
     };
     use tokio::time::sleep;
+
+    type LiveMeasurementOperation = StreamingOperation<LiveMeasurement>;
 
     fn build_query(power: f64) -> mock_subscription::LiveMeasurement {
         mock_subscription::LiveMeasurement {
@@ -23,7 +26,7 @@ mod lib_tests {
         }
     }
 
-    fn build_streaming_operation() -> StreamingOperation<LiveMeasurement> {
+    fn build_streaming_operation() -> LiveMeasurementOperation {
         let variables = live_measurement::Variables {
             id: "123".to_string(),
         };
@@ -39,7 +42,7 @@ mod lib_tests {
 
     async fn start_subscribtion(
         server: &SubscriptionServer,
-    ) -> Result<Subscription<StreamingOperation<LiveMeasurement>>, graphql_ws_client::Error> {
+    ) -> Result<LiveMeasurementSubscription, graphql_ws_client::Error> {
         let mut request = server.websocket_url().into_client_request().unwrap();
         request.headers_mut().insert(
             "Sec-WebSocket-Protocol",

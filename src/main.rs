@@ -14,11 +14,17 @@ use crossterm::{
 use ctrlc::set_handler;
 use exitcode;
 use futures::executor::block_on;
-use graphql_ws_client::{graphql::StreamingOperation, Subscription};
 use rand::Rng;
 use tokio::time;
 
-use tibberator::tibber::*;
+use tibberator::tibber::{
+    check_user_shutdown,
+    data_handling::{
+        connect_live_measurement, get_home_ids, AccessConfig, LiveMeasurementSubscription,
+        LoopEndingError,
+    },
+    loop_for_data, Config,
+};
 
 /// Retrieves the configuration settings for the Tibberator application.
 ///
@@ -55,11 +61,11 @@ fn get_config() -> Result<Config, confy::ConfyError> {
 async fn main() {
     let config = get_config().expect("Config file must be loaded.");
     if !block_on(check_home_id(&config.access)) {
-            eprintln!("Home ID not found for specified access token");
-            println!("Press Enter to continue...");
+        eprintln!("Home ID not found for specified access token");
+        println!("Press Enter to continue...");
 
-            let _ = stdin().read(&mut [0u8]).unwrap();
-            std::process::exit(exitcode::DATAERR)
+        let _ = stdin().read(&mut [0u8]).unwrap();
+        std::process::exit(exitcode::DATAERR)
     }
 
     execute!(stdout(), EnterAlternateScreen, cursor::Hide).unwrap();
@@ -133,7 +139,7 @@ config.yaml found in the Tibberator app_data directory.",
 ///
 /// # Returns
 /// - `true` if the `home_id` exists in the list of home IDs, otherwise `false`.
-/// 
+///
 async fn check_home_id(access_config: &AccessConfig) -> bool {
     match get_home_ids(&access_config).await {
         Ok(home_ids) => home_ids.contains(&access_config.home_id),
@@ -169,9 +175,9 @@ async fn check_home_id(access_config: &AccessConfig) -> bool {
 ///
 async fn handle_reconnect(
     access_config: &AccessConfig,
-    subscription: Box<Subscription<StreamingOperation<LiveMeasurement>>>,
+    subscription: Box<LiveMeasurementSubscription>,
     receiver: &Receiver<bool>,
-) -> Result<Subscription<StreamingOperation<LiveMeasurement>>, LoopEndingError> {
+) -> Result<LiveMeasurementSubscription, LoopEndingError> {
     if let Err(error) = subscription.stop().await {
         eprintln!("{:?}", error);
         std::process::exit(exitcode::PROTOCOL)
@@ -222,10 +228,7 @@ async fn handle_reconnect(
 async fn subscription_loop(
     config: Config,
     receiver: Receiver<bool>,
-) -> Result<
-    Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>,
-    Box<dyn std::error::Error>,
-> {
+) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error>> {
     let mut subscription = Box::new(connect_live_measurement(&config.access).await);
 
     write!(stdout(), "Waiting for data ...").unwrap();
