@@ -1,3 +1,4 @@
+/// This module handles connectivity and data for the tibberator application.
 use async_tungstenite::{
     async_std::{connect_async, ConnectStream},
     tungstenite::handshake::client::{generate_key, Response},
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
 
+/// `Home` is a struct that represents a GraphQL query for the `home` endpoint.
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
@@ -24,6 +26,7 @@ use thiserror::Error;
 )]
 pub struct Home;
 
+/// `Viewer` is a struct that represents a GraphQL query for the `viewer` endpoint.
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
@@ -32,6 +35,7 @@ pub struct Home;
 )]
 pub struct Viewer;
 
+/// `LiveMeasurement` is a struct that represents a GraphQL query for the `live_measurement` endpoint.
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
@@ -40,6 +44,7 @@ pub struct Viewer;
 )]
 pub struct LiveMeasurement;
 
+/// `PriceCurrent` is a struct that represents a GraphQL query for the `price_current` endpoint.
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
@@ -48,6 +53,8 @@ pub struct LiveMeasurement;
 )]
 struct PriceCurrent;
 
+/// `LoopEndingError` is an enum that represents the different types of errors that can occur when a loop ends.
+/// It can be one of the following: `Shutdown`, `Reconnect`, or `InvalidData`.
 #[derive(Debug, Error, PartialEq)]
 pub enum LoopEndingError {
     #[error("Shutdown requested")]
@@ -58,6 +65,7 @@ pub enum LoopEndingError {
     InvalidData,
 }
 
+/// `AccessConfig` is a struct that represents the configuration for accessing the Tibber service.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccessConfig {
     pub token: String,
@@ -77,6 +85,8 @@ impl Default for AccessConfig {
     }
 }
 
+/// `PriceLevel` is an enum that represents the different levels of price.
+/// It can be one of the following: `VeryCheap`, `Cheap`, `Normal`, `Expensive`, `VeryExpensive`, `Other(String)`, or `None`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PriceLevel {
     VeryCheap,
@@ -88,12 +98,15 @@ pub enum PriceLevel {
     None,
 }
 
+/// The `Default` implementation for `PriceLevel` provides a default instance of `PriceLevel` as `None`.
 impl Default for PriceLevel {
     fn default() -> Self {
         PriceLevel::None
     }
 }
 
+/// `PriceInfo` is a struct that represents the information about the tibber energy price at a certain time.
+/// It contains the following fields: `total`, `energy`, `tax`, `starts_at`, `currency`, and `level`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PriceInfo {
     pub total: f64,
@@ -105,6 +118,7 @@ pub struct PriceInfo {
 }
 
 impl PriceInfo {
+    /// The `new_current` method for `PriceInfo` provides a way to create a new instance of `PriceInfo` from a given `price_info` representing the current energy prices.
     fn new_current(
         price_info: price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent,
     ) -> Option<Self> {
@@ -190,8 +204,27 @@ fn create_client(access_token: &str) -> Result<Client, reqwest::Error> {
         .build()
 }
 
-/// Fetches data from the Tibber API by sending a GraphQL-Query using
-/// the `config`-values and the GraphQL-Variables `variables` to send.
+/// Asynchronously fetches data from a GraphQL endpoint.
+///
+/// This function takes in a configuration object and a set of variables, and returns a `Result` containing either a `Response` object with the response data or an `Error`.
+///
+/// ## Arguments
+///
+/// * `config`: A reference to an `AccessConfig` object that contains the access configuration for the GraphQL endpoint.
+/// * `variables`: A set of variables for the GraphQL query. The type of these variables is determined by the `GraphQLQuery` trait.
+///
+/// ## Returns
+///
+/// * `Result<graphql_client::Response<<T as GraphQLQuery>::ResponseData>, reqwest::Error>`: A `Result` object that contains either a `Response` object with the response data or an `Error`.
+///
+/// ## Type Parameters
+///
+/// * `T`: The type that implements the `GraphQLQuery` trait.
+///
+/// ## Errors
+///
+/// This function will return an `Error` if the request fails.
+///
 async fn fetch_data<T>(
     config: &AccessConfig,
     variables: <T as GraphQLQuery>::Variables,
@@ -279,11 +312,17 @@ fn configure_request(access_token: &str, uri: Uri) -> Builder {
     request_builder
 }
 
-/// Gets all Viewer data
+/// Retrieves all `Viewer` data from the Tibber schema.
 ///
-/// cf. the tibber schema. Needs an `access_token` configured in `config` to fetch data.
+/// Requires an `access_token` configured in the provided `config` to fetch data.
 ///
-/// # Examples
+/// ## Parameters
+/// - `config`: An `AccessConfig` containing configuration details (e.g., access token).
+///
+/// ## Returns
+/// A `Result` containing either:
+/// - A `graphql_client::Response` with the response data for the `Viewer` query.
+/// - An error of type `reqwest::Error` if there are issues during data retrieval.
 ///
 async fn get_viewer(
     config: &AccessConfig,
@@ -292,10 +331,21 @@ async fn get_viewer(
     fetch_data::<Viewer>(config, variables).await
 }
 
-/// Retrieves the WebSocket URL to connect to the Tibber service using the provided `access_token`.
+/// Asynchronously fetches the subscription URL from a GraphQL endpoint.
+///
+/// This function takes in a configuration object and returns a `Result` containing either a `String` with the subscription URL or an `Error`.
+///
+/// ## Arguments
+///
+/// * `config`: A reference to an `AccessConfig` object that contains the access configuration for the GraphQL endpoint.
+///
+/// ## Returns
+///
+/// * `Result<String, Box<dyn std::error::Error>>`: A `Result` object that contains either a `String` with the subscription URL or an `Error`.
 ///
 /// ## Errors
-/// - Returns an error if the WebSocket URL could not be retrieved.
+///
+/// This function will return an `Error` if the request fails, no websocket URL is found, or no data is found in the viewer.
 ///
 async fn fetch_subscription_url(
     config: &AccessConfig,
@@ -327,17 +377,17 @@ async fn fetch_subscription_url(
     }
 }
 
-/// Retrieves all `Viewer` data from the Tibber schema.
+/// Handles the errors returned from a GraphQL response.
 ///
-/// Requires an `access_token` configured in the provided `config` to fetch data.
+/// This function takes in an `Option` containing a list of GraphQL errors and returns an `Option` containing a boxed `Error` if there are any errors, or `None` if there are no errors.
 ///
-/// ## Parameters
-/// - `config`: An `AccessConfig` containing configuration details (e.g., access token).
+/// ## Arguments
+///
+/// * `errors`: An `Option` containing a vector of GraphQL errors.
 ///
 /// ## Returns
-/// A `Result` containing either:
-/// - A `graphql_client::Response` with the response data for the `Viewer` query.
-/// - An error of type `reqwest::Error` if there are issues during data retrieval.
+///
+/// * `Option<Box<dyn std::error::Error>>`: An `Option` containing a boxed `Error` if there are any errors, or `None` if there are no errors.
 ///
 fn handle_response_error(
     errors: Option<Vec<graphql_client::Error>>,

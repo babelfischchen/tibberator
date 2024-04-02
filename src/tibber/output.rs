@@ -13,12 +13,16 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+/// `OutputType` is an enum that represents the different types of output.
+/// It can be one of the following: `Full` or `Silent`.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum OutputType {
     Full,
     Silent,
 }
 
+/// `TaxStyle` is an enum that represents the different styles of tax.
+/// It can be one of the following: `Price`, `Percent`, or `None`.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub enum TaxStyle {
     Price,
@@ -26,12 +30,15 @@ pub enum TaxStyle {
     None,
 }
 
+/// `OutputConfig` is a struct that represents the configuration for output.
+/// It contains the following fields: `output_type` and `tax_style`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,
 }
 
+/// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full` and `tax_style` as `Price`.
 impl Default for OutputConfig {
     fn default() -> Self {
         OutputConfig {
@@ -42,10 +49,12 @@ impl Default for OutputConfig {
 }
 
 impl OutputConfig {
+    /// The `is_silent` method for `OutputConfig` checks if the `output_type` is `Silent`.
     pub fn is_silent(&self) -> bool {
         self.output_type == OutputType::Silent
     }
 
+    /// The `new` method for `OutputConfig` provides a way to create a new instance of `OutputConfig` with a given `output_type` and `tax_style` as `None`.
     pub fn new(output_type: OutputType) -> Self {
         OutputConfig {
             output_type,
@@ -53,6 +62,7 @@ impl OutputConfig {
         }
     }
 
+    /// The `get_tax_style` method for `OutputConfig` provides a way to get a reference to the `tax_style`.
     pub fn get_tax_style(&self) -> &TaxStyle {
         self.tax_style.borrow()
     }
@@ -81,7 +91,12 @@ pub fn print_screen(
             format!(" Tax: {:.3} {}/kWh", price_info.tax, price_info.currency)
         }
         TaxStyle::Percent => {
-            format!(" Tax: {:.1} %", price_info.tax / price_info.total * 100.)
+            let percent = if price_info.total != 0. {
+                (price_info.tax / price_info.total * 100.).clamp(0., 100.)
+            } else {
+                0.
+            };
+            format!(" Tax: {:.1} %", percent)
         }
         TaxStyle::None => {
             return;
