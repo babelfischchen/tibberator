@@ -18,12 +18,8 @@ use rand::Rng;
 use tokio::time;
 
 use tibberator::tibber::{
-    check_user_shutdown,
-    data_handling::{
-        connect_live_measurement, get_home_ids, AccessConfig, LiveMeasurementSubscription,
-        LoopEndingError,
-    },
-    loop_for_data, Config,
+    check_user_shutdown, connect_live_measurement, get_home_ids, loop_for_data, AccessConfig,
+    Config, LiveMeasurementSubscription, LoopEndingError,
 };
 
 /// Retrieves the configuration settings for the Tibberator application.

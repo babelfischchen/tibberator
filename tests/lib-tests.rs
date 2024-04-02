@@ -8,16 +8,14 @@ mod lib_tests {
     use futures::StreamExt;
 
     use crate::mock_subscription::{self, SubscriptionServer};
-    use graphql_ws_client::{graphql::StreamingOperation, Client};
+    use graphql_ws_client::Client;
     use http::HeaderValue;
     use std::sync::mpsc;
     use tibberator::tibber::{
-        data_handling::{live_measurement, LiveMeasurement, LiveMeasurementSubscription},
-        loop_for_data, Config,
+        live_measurement, loop_for_data, Config, LiveMeasurementOperation,
+        LiveMeasurementSubscription,
     };
     use tokio::time::sleep;
-
-    type LiveMeasurementOperation = StreamingOperation<LiveMeasurement>;
 
     fn build_query(power: f64) -> mock_subscription::LiveMeasurement {
         mock_subscription::LiveMeasurement {
@@ -30,7 +28,7 @@ mod lib_tests {
         let variables = live_measurement::Variables {
             id: "123".to_string(),
         };
-        StreamingOperation::<LiveMeasurement>::new(variables)
+        LiveMeasurementOperation::new(variables)
     }
 
     fn get_test_config() -> Config {
