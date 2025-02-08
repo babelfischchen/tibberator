@@ -6,7 +6,7 @@ authors = ["Stephan Zoellinger"]
 description = "A small tool to connect to the Tibber API and read current power data."
 license = "MIT"
 repository = "https://github.com/babelfischchen/tibberator"
-rust-version = "1.76"
+rust-version = "1.84.1"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -30,9 +30,9 @@ tokio = { version = "1", features = ["full"] }
 thiserror = "1.0"
 
 [dev-dependencies]
-async-graphql = "7.0.1"
+async-graphql = "7.0"
 async-graphql-axum = "7"
-axum = "0.7"
+axum = "0.8.1"
 axum-macros = "0.4"
 serial_test = "3.0.0"
 tokio-stream = { version = "0.1", features = ["sync"] }

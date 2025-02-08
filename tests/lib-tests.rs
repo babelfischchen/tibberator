@@ -50,7 +50,7 @@ mod lib_tests {
         let (connection, _) = connect_async(request).await.unwrap();
         println!("Connected!");
 
-        let (mut client, actor) = Client::build(connection).await.unwrap();
+        let (client, actor) = Client::build(connection).await.unwrap();
         tokio::spawn(actor.into_future());
         client.subscribe(build_streaming_operation()).await
     }

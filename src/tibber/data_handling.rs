@@ -16,6 +16,7 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use thiserror::Error;
+use tokio::time::timeout;
 
 /// `Home` is a struct that represents a GraphQL query for the `home` endpoint.
 #[derive(GraphQLQuery)]
@@ -63,6 +64,8 @@ pub enum LoopEndingError {
     Reconnect,
     #[error("Invalid or no data received.")]
     InvalidData,
+    #[error("Connection timed out while waiting for data.")]
+    ConnectionTimeout,
 }
 
 /// `AccessConfig` is a struct that represents the configuration for accessing the Tibber service.
@@ -512,8 +515,12 @@ async fn get_current_energy_price(
 ) -> Result<PriceInfo, Box<dyn std::error::Error>> {
     let id = config.home_id.to_owned();
     let variables = price_current::Variables { id };
-    let price_data_response = fetch_data::<PriceCurrent>(config, variables).await?;
-    let price_info = price_data_response
+    let price_data_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<PriceCurrent>(config, variables),
+    )
+    .await?;
+    let price_info = price_data_response?
         .data
         .ok_or(LoopEndingError::InvalidData)?
         .viewer
