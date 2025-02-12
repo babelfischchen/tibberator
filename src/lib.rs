@@ -4,6 +4,7 @@
 //! You need an access token in order to use the API.
 pub mod tibber {
     use futures::{future, stream::StreamExt, task::Poll};
+    use log::{debug, error, info};
     use serde::{Deserialize, Serialize};
     use std::{
         cell::Cell,
@@ -19,6 +20,8 @@ pub mod tibber {
     };
     use output::{print_screen, OutputConfig};
 
+    use crate::html_logger::LogConfig;
+
     mod data_handling;
     mod output;
 
@@ -26,6 +29,7 @@ pub mod tibber {
     pub struct Config {
         pub access: AccessConfig,
         pub output: OutputConfig,
+        pub logging: LogConfig,
     }
 
     impl Default for Config {
@@ -33,6 +37,7 @@ pub mod tibber {
             Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::default(),
+                logging: LogConfig::default(),
             }
         }
     }
@@ -154,6 +159,8 @@ pub mod tibber {
                         let current_state = data.live_measurement.unwrap();
                         last_value_received.set(Instant::now());
 
+                        debug!(target: "tibberator.mainloop", "Received power measurement: {} W", current_state.power);
+
                         if !config.output.is_silent() {
                             print_screen(
                                 &config.output.get_tax_style(),
@@ -161,25 +168,27 @@ pub mod tibber {
                                 &current_price_info,
                             );
                         }
-
-                        current_price_info = update_current_energy_price_info(
-                            &config.access,
-                            Some(current_price_info),
-                        )
-                        .await?;
                     }
                     None => {
+                        error!(target: "tibberator.mainloop", "Invalid data received, shutting down.");
                         return Err(Box::new(LoopEndingError::InvalidData));
                     }
                 },
                 Ok(None) => break,
                 Err(_) => {
+                    info!(target: "tibberator.mainloop", "Connection timed out, reconecting...");
                     return Err(Box::new(LoopEndingError::Reconnect));
                 }
             }
+
+            current_price_info =
+                update_current_energy_price_info(&config.access, Some(current_price_info)).await?;
         }
         match stream.take_result() {
-            Some(LoopEndingError::Shutdown) => Ok(()),
+            Some(LoopEndingError::Shutdown) => {
+                info!(target: "tibberator.mainloop", "User shutdown requested.");
+                Ok(())
+            }
             Some(LoopEndingError::Reconnect) => Err(Box::new(LoopEndingError::Reconnect)),
             _ => Err(Box::new(LoopEndingError::InvalidData)),
         }
@@ -237,6 +246,7 @@ pub mod tibber {
             let config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent),
+                logging: LogConfig::default(),
             };
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
 
@@ -256,6 +266,7 @@ pub mod tibber {
             let mut config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent),
+                logging: LogConfig::default(),
             };
             config.access.home_id.pop();
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
@@ -282,6 +293,7 @@ pub mod tibber {
             let mut config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent),
+                logging: LogConfig::default(),
             };
             config.access.reconnect_timeout = 0;
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
@@ -297,3 +309,5 @@ pub mod tibber {
         }
     }
 }
+
+pub mod html_logger;

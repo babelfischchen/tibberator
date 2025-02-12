@@ -9,6 +9,7 @@ use crossterm::style;
 use graphql_client::{reqwest::post_graphql, GraphQLQuery};
 use graphql_ws_client::{graphql::StreamingOperation, Client as WSClient, Subscription};
 use http::{request::Builder, Request, Uri};
+use log::{error, info, warn};
 use reqwest::{
     header::{HeaderMap, AUTHORIZATION},
     Client,
@@ -513,6 +514,8 @@ pub async fn get_home_ids(
 async fn get_current_energy_price(
     config: &AccessConfig,
 ) -> Result<PriceInfo, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.price", "Fetching current energy price.");
+
     let id = config.home_id.to_owned();
     let variables = price_current::Variables { id };
     let price_data_response = timeout(
@@ -520,15 +523,23 @@ async fn get_current_energy_price(
         fetch_data::<PriceCurrent>(config, variables),
     )
     .await?;
+
     let price_info = price_data_response?
         .data
         .ok_or(LoopEndingError::InvalidData)?
         .viewer
         .home
         .current_subscription
-        .ok_or(LoopEndingError::InvalidData)?
-        .price_info
+        .and_then(|info| info.price_info)
         .ok_or(LoopEndingError::InvalidData)?;
+
+    info!(target: "tibberator.price", "Received price data");
+    if let Some(current_price) = price_info.current.as_ref().or(None) {
+        info!(target: "tibberator.price", "Current price: {:?}", current_price.total);
+    } else {
+        warn!(target: "tibberator.price", "Current price not available in data");
+    }
+
     PriceInfo::new_current(price_info.current.ok_or(LoopEndingError::InvalidData)?)
         .ok_or(Box::new(LoopEndingError::InvalidData))
 }
@@ -671,10 +682,12 @@ pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementS
 
     match subscription {
         Ok(result) => {
+            info!(target: "tibberator.connection", "Successfully connected to Tibber service.");
             println!("Connection established");
             result
         }
         Err(error) => {
+            error!(target: "tibberator.connection", "Failed to connect to Tibber service: {:?}", error);
             println!("{:?}", error);
             std::process::exit(exitcode::PROTOCOL);
         }

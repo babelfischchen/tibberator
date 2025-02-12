@@ -12,16 +12,19 @@ rust-version = "1.84.1"
 
 [dependencies]
 async-tungstenite = {version = "0.25.0", features = ["async-native-tls", "async-std-runtime"]}
+build-info = "0.0.39"
 chrono = "0.4"
 clap-v3 = "3.0.0-beta.1"
 crossterm = {version = "0.27.0"}
 confy = "^0.6"
 ctrlc = "3.4"
+dirs = "6.0"
 exitcode = "1.1.2"
 futures = {version = "0.3.30"}
 graphql_client = {version = "0.13.0", features = ["reqwest"]}
 graphql-ws-client = {version = "0.8.0-rc.2", features = ["client-graphql-client", "async-tungstenite"]}
 http = "1.0"
+log = {version = "0.4", features = ["std"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0.113"
 rand = "0.8"
@@ -29,10 +32,14 @@ reqwest = {version = "^0.11", features = ["json", "blocking"]}
 tokio = { version = "1", features = ["full"] }
 thiserror = "1.0"
 
+[build-dependencies]
+build-info-build = "0.0.39"
+
 [dev-dependencies]
 async-graphql = "7.0"
 async-graphql-axum = "7"
 axum = "0.8.1"
 axum-macros = "0.4"
 serial_test = "3.0.0"
+regex = "1.11.1"
 tokio-stream = { version = "0.1", features = ["sync"] }

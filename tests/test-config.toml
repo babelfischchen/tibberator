@@ -7,3 +7,6 @@ reconnect_timeout = 30
 [output]
 output_type = "Silent"
 tax_style = "None"
+
+[logging]
+log_level = "info"

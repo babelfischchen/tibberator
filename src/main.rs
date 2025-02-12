@@ -1,8 +1,10 @@
 use std::{
     io::{stdin, stdout, Read, Write},
+    process::ExitCode,
     sync::mpsc::{self, Receiver},
 };
 
+use chrono::Local;
 use clap_v3::{App, Arg, ArgMatches};
 
 use confy;
@@ -12,15 +14,20 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ctrlc::set_handler;
+use dirs::home_dir;
 use exitcode;
 use futures::executor::block_on;
+use log::{error, info, SetLoggerError};
 use rand::Rng;
+use std::fs::{create_dir_all, File};
 use tokio::time;
 
 use tibberator::tibber::{
     check_user_shutdown, connect_live_measurement, get_home_ids, loop_for_data, AccessConfig,
     Config, LiveMeasurementSubscription, LoopEndingError,
 };
+
+use tibberator::html_logger::{HtmlLogger, LogConfig};
 
 /// Retrieves the configuration settings for the Tibberator application.
 ///
@@ -53,8 +60,15 @@ fn get_config() -> Result<Config, confy::ConfyError> {
     Ok(config)
 }
 
+fn init_html_logger(file_path: &str, log_config: &LogConfig) -> Result<(), SetLoggerError> {
+    let file = File::create(file_path).expect("Log file must be created.");
+    HtmlLogger::init(log_config.level(), file)
+}
+
+build_info::build_info!(fn build_info);
+
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     let config = get_config().expect("Config file must be loaded.");
     if !block_on(check_home_id(&config.access)) {
         eprintln!("Home ID not found for specified access token");
@@ -63,6 +77,22 @@ async fn main() {
         let _ = stdin().read(&mut [0u8]).unwrap();
         std::process::exit(exitcode::DATAERR)
     }
+
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let file_name = format!("app_log_{}.html", timestamp);
+    let file_path = home_dir()
+        .expect("Home directory must be found.")
+        .join(".tibberator")
+        .join("logs");
+    if !file_path.exists() {
+        create_dir_all(&file_path).expect("Failed to create log directory");
+    }
+    let file_path = file_path.join(file_name);
+
+    // Initialize the HTML logger
+    init_html_logger(&file_path.to_str().unwrap(), &config.logging).unwrap();
+    info!(target: "tibberator.app", "{:#?}", build_info());
+    info!(target: "tibberator.app", "Application started.");
 
     execute!(stdout(), EnterAlternateScreen, cursor::Hide).unwrap();
 
@@ -76,28 +106,36 @@ async fn main() {
 
     execute!(stdout(), LeaveAlternateScreen).unwrap();
 
-    match subscription {
+    let exitcode = match subscription {
         Ok(result) => match result {
             Some(value) => {
                 let stop_result = block_on(value.stop());
                 match stop_result {
-                    Ok(()) => std::process::exit(exitcode::OK),
+                    Ok(()) => {
+                        info!(target: "tibberator.app", "Application stopped.");
+                        ExitCode::SUCCESS
+                    }
                     Err(error) => {
                         println!("{:?}", error);
-                        std::process::exit(exitcode::PROTOCOL)
+                        error!(target: "tibberator.app", "Exiting application due to error: {:?}", error);
+                        ExitCode::FAILURE
                     }
-                };
+                }
             }
-            _ => {}
+            _ => ExitCode::FAILURE,
         },
         Err(error) => {
             println!("{:?}", error);
             println!("Press Enter to continue...");
 
             let _ = stdin().read(&mut [0u8]).unwrap();
-            std::process::exit(exitcode::PROTOCOL)
+            ExitCode::FAILURE
         }
     };
+
+    log::logger().flush();
+
+    exitcode
 }
 
 fn get_matcher() -> ArgMatches {
