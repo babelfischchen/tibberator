@@ -49,11 +49,26 @@ impl<W: Write + Send + 'static> HtmlLogger<W> {
             let mut write_lock = write_mutex.lock().unwrap();
             let _ = write!(
                 write_lock,
-                "<!DOCTYPE html>\n<html>\n<head>\n<title>Log</title>\n"
+                "<!DOCTYPE html>
+<html>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1.0'>
+<title>Log Viewer</title>\n"
             );
             Self::add_styles(&mut write_lock);
             Self::add_scripts(&mut write_lock);
-            let _ = write!(write_lock, "\n</head>\n<body>\n<div class=\"filter-controls\">\n<select id=\"targetFilter\"></select>\n<button id=\"resetButton\">Show all</button>\n</div>\n");
+            let _ = write!(
+                write_lock,
+                "\n</head>
+<body>
+<div class=\"log-page\">
+<div class=\"filter-controls\">
+<div id=\"targetFilter\"></div>
+<button id=\"resetButton\">Show all</button>
+</div>
+<div class=\"log-container\">\n"
+            );
         }
 
         Box::new(HtmlLogger {
@@ -70,7 +85,8 @@ impl<W: Write + Send + 'static> HtmlLogger<W> {
         write!(
             write_lock,
             "<style>
-.log-message {{ max-width: 80%; margin-left: 1em; display: flex; align-items: flex-start; font-size: 10pt }}
+.log-page {{ display: flex; height: 100vh; padding: 20px; flex-direction: row-reverse; }}
+.log-message {{ margin-left: 1em; display: flex; align-items: flex-start; font-size: 10pt }}
 .logtext {{ flex-grow: 1; padding: 3px; border-radius: 2px }}
 .error {{ background-color: #ffcccc; color: darkred; font-weight: bold }}
 .warn {{ background-color: #ffff99; color: darkorange; font-weight: bold }}
@@ -80,29 +96,67 @@ impl<W: Write + Send + 'static> HtmlLogger<W> {
 .timestamp {{ font-weight: bold; padding-top: 3px; white-space: nowrap; }}
 
 .filter-controls {{
+    position: fixed;
+    width: 250px;
+    height: 400px;
     padding: 10px;
     background: #f5f5f5;
-    border-bottom: 1px solid #ddd;
     display: flex;
-    gap: 10px;
+    gap: 20px;
     align-items: center;
+    flex-direction: column;
+    margin-right: auto;
+    top: auto;
+    right: 20px;
+    z-index: 100;
+    border: #444444;
+    box-shadow: 4px 4px 8px rgba(0, 0, 0, 0.3);
+    border-style: solid;
+    border-width: 2px;
+    border-radius: 5px;
 }}
 
+.targetFilter {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}}
+
+.filter-checkbox {{
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}}
+
+.log-container {{
+    width: calc(100% - 290px);
+    margin-right: auto;
+}}
+
+
 #targetFilter {{
+    height: 80%;
     padding: 5px;
     border: 1px solid #ccc;
     border-radius: 3px;
-    font-family: 'Courier New', monospace;
     background: white;
-}}
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    overflow-y: auto;
+    font-family: Helvetica New, sans-serif;
+    font-size: 12px;
+    width: calc(100% - 20px);
+    margin: 10px;
+}} 
 
 #resetButton {{
-    padding: 5px 10px;
+    padding: 5px 20px;
     background: #e0e0e0;
     border: 1px solid #ccc;
-    border-radius: 3px;
+    border-radius: 5px;
     cursor: pointer;
-    font-family: 'Courier New', monospace;
+    font-family: Helvetica New, sans-serif;
 }}
 
 #resetButton:hover {{
@@ -131,38 +185,95 @@ document.addEventListener('DOMContentLoaded', function() {{
         }}
     }});
 
-    // Add options to the dropdown
-    var selectElement = document.getElementById('targetFilter');
-    var allOption = new Option('All', 'all');
-    selectElement.appendChild(allOption);
+    // Create checkboxes for each unique target
+    const checkboxContainers = [];
 
-    targets.forEach(function(target) {{
-        var option = new Option(target, target);
-        selectElement.appendChild(option);
+    var allCheckbox = document.createElement('input');
+    allCheckbox.type = 'checkbox';
+    allCheckbox.className = 'filter-checkbox';
+    allCheckbox.value = 'All';
+    allCheckbox.checked = true;
+    const allLabel = document.createElement('label');
+    allLabel.textContent = 'All';
+
+    const checkboxLabelContainer = document.createElement('div');
+    checkboxLabelContainer.className = 'checkbox-label-container';
+
+    checkboxLabelContainer.appendChild(allCheckbox);
+    checkboxLabelContainer.appendChild(allLabel);
+    checkboxContainers.push(checkboxLabelContainer);
+
+    // Add event listener to 'All' checkbox
+    allCheckbox.addEventListener('change', function () {{
+        const isChecked = allCheckbox.checked;
+        checkboxContainers.slice(1).forEach(container => {{ // Skip the first checkbox (All)
+            const checkbox = container.querySelector('.filter-checkbox');
+            checkbox.checked = isChecked;
+            checkbox.dispatchEvent(new Event('change'));
         }});
-
-    // Filter log entries based on the selected target
-    selectElement.addEventListener('change', function() {{
-        var selectedTarget = this.value;
+    }});
+    
+    targets.forEach(function(target) {{
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'filter-checkbox';
+        checkbox.value = target;
+        checkbox.checked = true;
         
-        logEntries.forEach(function(entry) {{
-            var logtextSpan = entry.querySelector('.logtext');
-            if (logtextSpan) {{
-                var targetText = logtextSpan.textContent.split('[')[2].split(']')[0];
-                if (selectedTarget === 'all' || targetText === selectedTarget) {{
-                    entry.style.display = ''; // Reset to initial style
+        const label = document.createElement('label');
+        label.textContent = `${{target}}`;
+        label.htmlFor = `checkbox-${{target}}`;
+        
+        // Create a container for each checkbox and label
+        const checkboxLabelContainer = document.createElement('div');
+        checkboxLabelContainer.className = 'checkbox-label-container';
+
+        checkboxLabelContainer.appendChild(checkbox);
+        checkboxLabelContainer.appendChild(label);
+
+        checkboxContainers.push(checkboxLabelContainer);
+    }});
+
+    checkboxContainers.slice(1).forEach(container => {{
+        const checkbox = container.querySelector('.filter-checkbox');
+        checkbox.addEventListener('change', function() {{
+            var selectedTargets = checkboxContainers.slice(1).map(c => {{
+                const thisCheckbox = c.querySelector('.filter-checkbox');
+                return thisCheckbox.checked ? thisCheckbox.value : '';
+            }}).filter(Boolean).join(', ');
+            
+            logEntries.forEach(function(entry) {{
+                const logtextSpan = entry.querySelector('.logtext');
+                if (logtextSpan && 
+                    selectedTargets.includes(logtextSpan.textContent.split('[')[2].split(']')[0])) {{
+                    // Reset to initial style
+                    entry.style.display = ''; 
                 }} else {{
                     entry.style.display = 'none';
                 }}
-            }}
+            }});
+
+            // Ensure the 'All' checkbox is unchecked if any individual checkbox is unchecked
+            allCheckbox.checked = checkboxContainers.slice(1).every(c => {{
+                const thisCheckbox = c.querySelector('.filter-checkbox');
+                return thisCheckbox.checked;
+            }});
         }});
     }});
 
+
+    var selectElement = document.getElementById('targetFilter');
+    checkboxContainers.forEach(box => {{
+        selectElement.appendChild(box);
+    }})
+
     // Event listener to reset button
     document.getElementById('resetButton').addEventListener('click', function() {{
-        selectElement.value = 'all';
-        logEntries.forEach(function(entry) {{
-            entry.style.display = ''; // Reset to initial style
+        allCheckbox.checked = true;
+        checkboxContainers.slice(1).forEach(container => {{ // Skip the first checkbox (All)
+            const checkbox = container.querySelector('.filter-checkbox');
+            checkbox.checked = true;
+            checkbox.dispatchEvent(new Event('change')); // Manually trigger change event
         }});
     }});
 
@@ -217,7 +328,7 @@ impl<W: Write + Send + 'static> Log for HtmlLogger<W> {
     fn flush(&self) {
         let mut write_lock = self.writable.lock().unwrap();
         let _ = write_lock.flush();
-        let _ = write!(write_lock, "\n</body>\n</html>");
+        let _ = write!(write_lock, "\n</div>\n</div>\n</body>\n</html>");
     }
 }
 

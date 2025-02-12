@@ -140,7 +140,7 @@ async fn main() -> ExitCode {
 
 fn get_matcher() -> ArgMatches {
     App::new("Tibberator")
-        .version("0.1.0")
+        .version("0.3.0-alpha")
         .author("Stephan Z. <https://github.com/babelfischchen>")
         .about(
             "Tibberator connects to the Tibber API and shows basic usage statistics for your home.

@@ -1,6 +1,6 @@
 [package]
 name = "tibberator"
-version = "0.2.0"
+version = "0.3.0-alpha"
 edition = "2021"
 authors = ["Stephan Zoellinger"]
 description = "A small tool to connect to the Tibber API and read current power data."
