@@ -111,10 +111,7 @@ async fn main() -> ExitCode {
             Some(value) => {
                 let stop_result = block_on(value.stop());
                 match stop_result {
-                    Ok(()) => {
-                        info!(target: "tibberator.app", "Application stopped.");
-                        ExitCode::SUCCESS
-                    }
+                    Ok(()) => ExitCode::SUCCESS,
                     Err(error) => {
                         println!("{:?}", error);
                         error!(target: "tibberator.app", "Exiting application due to error: {:?}", error);
@@ -126,6 +123,7 @@ async fn main() -> ExitCode {
         },
         Err(error) => {
             println!("{:?}", error);
+            error!(target: "tibberator.app", "Exiting application due to error: {:?}", error);
             println!("Press Enter to continue...");
 
             let _ = stdin().read(&mut [0u8]).unwrap();
@@ -133,6 +131,7 @@ async fn main() -> ExitCode {
         }
     };
 
+    info!(target: "tibberator.app", "Application stopped.");
     log::logger().flush();
 
     exitcode
