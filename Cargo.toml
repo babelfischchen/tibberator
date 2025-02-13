@@ -1,6 +1,6 @@
 [package]
 name = "tibberator"
-version = "0.3.0-alpha"
+version = "0.3.0-rc1"
 edition = "2021"
 authors = ["Stephan Zoellinger"]
 description = "A small tool to connect to the Tibber API and read current power data."
@@ -11,7 +11,7 @@ rust-version = "1.84.1"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-async-tungstenite = {version = "0.25.0", features = ["async-native-tls", "async-std-runtime"]}
+async-tungstenite = {version = "0.28.2", features = ["async-native-tls", "async-std-runtime"]}
 build-info = "0.0.39"
 chrono = "0.4"
 clap-v3 = "3.0.0-beta.1"
@@ -21,8 +21,8 @@ ctrlc = "3.4"
 dirs = "6.0"
 exitcode = "1.1.2"
 futures = {version = "0.3.30"}
-graphql_client = {version = "0.13.0", features = ["reqwest"]}
-graphql-ws-client = {version = "0.8.0-rc.2", features = ["client-graphql-client", "async-tungstenite"]}
+graphql_client = {version = "0.14.0", features = ["reqwest"]}
+graphql-ws-client = {version = "0.11.0", features = ["client-graphql-client", "tungstenite"]}
 http = "1.0"
 log = {version = "0.4", features = ["std"]}
 serde = {version = "1.0", features = ["derive"]}
