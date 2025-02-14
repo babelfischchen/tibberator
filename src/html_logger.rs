@@ -11,6 +11,17 @@ pub struct LogConfig {
 }
 
 impl LogConfig {
+    /// Converts the log level string to a `LevelFilter` enum value
+    ///
+    /// # Arguments
+    /// * `self` - Reference to the LogConfig instance
+    ///
+    /// # Returns
+    /// `LevelFilter` matching the configured log level
+    ///
+    /// # Panics
+    /// Panics if the log_level string contains an invalid value
+    #[doc = r" Converts the log level string to a `LevelFilter` enum value"]
     pub fn level(&self) -> LevelFilter {
         match self.log_level.as_str() {
             "trace" => LevelFilter::Trace,
@@ -24,6 +35,10 @@ impl LogConfig {
 }
 
 impl Default for LogConfig {
+    /// Creates a default LogConfig with log level set to "info"
+    ///
+    /// # Returns
+    /// New `LogConfig` instance with default values
     fn default() -> Self {
         Self {
             log_level: String::from("info"),
@@ -37,11 +52,27 @@ pub struct HtmlLogger<W: Write + Send + 'static> {
 }
 
 impl<W: Write + Send + 'static> HtmlLogger<W> {
+    /// Initializes the HTML logger as the global logger
+    ///
+    /// # Arguments
+    /// * `log_level` - Maximum log level to capture
+    /// * `writable` - Write implementation for HTML output
+    ///
+    /// # Returns
+    /// `Result` indicating success or failure
     pub fn init(log_level: LevelFilter, writable: W) -> Result<(), SetLoggerError> {
         set_max_level(log_level);
         set_boxed_logger(HtmlLogger::new(log_level, writable))
     }
 
+    /// Creates a new HtmlLogger instance with initialized HTML structure
+    ///
+    /// # Arguments
+    /// * `log_level` - Maximum log level to capture
+    /// * `writable` - Write implementation for HTML output
+    ///
+    /// # Returns
+    /// Boxed HtmlLogger ready for use
     #[must_use]
     pub fn new(log_level: LevelFilter, writable: W) -> Box<HtmlLogger<W>> {
         let write_mutex = Mutex::new(writable);
@@ -77,10 +108,18 @@ impl<W: Write + Send + 'static> HtmlLogger<W> {
         })
     }
 
+    /// Acquires a lock on the underlying writable resource
+    ///
+    /// # Returns
+    /// Mutex guard providing access to the output writer
     pub fn get_writable(&self) -> MutexGuard<'_, W> {
         self.writable.lock().unwrap()
     }
 
+    /// Writes CSS styles for the HTML logger interface
+    ///
+    /// # Arguments
+    /// * `write_lock` - Mutable reference to the output writer
     fn add_styles(write_lock: &mut W) {
         write!(
             write_lock,
@@ -169,6 +208,10 @@ body {{ font-family: 'Courier New', Courier, monospace; }}
         .unwrap();
     }
 
+    /// Writes JavaScript functionality for log filtering
+    ///
+    /// # Arguments
+    /// * `write_lock` - Mutable reference to the output writer
     fn add_scripts(write_lock: &mut W) {
         write!(
             write_lock,
@@ -261,7 +304,6 @@ document.addEventListener('DOMContentLoaded', function() {{
         }});
     }});
 
-
     var selectElement = document.getElementById('targetFilter');
     checkboxContainers.forEach(box => {{
         selectElement.appendChild(box);
@@ -285,10 +327,30 @@ document.addEventListener('DOMContentLoaded', function() {{
 }
 
 impl<W: Write + Send + 'static> Log for HtmlLogger<W> {
+    /// Determines if a log message should be processed based on its level
+    ///
+    /// # Arguments
+    /// * `metadata` - Log metadata containing the level to check
+    ///
+    /// # Returns
+    /// `true` if the message level is within the configured filter, `false` otherwise
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         metadata.level() <= self.level
     }
 
+    /// Processes and writes a log record to HTML output
+    ///
+    /// # Arguments
+    /// * `record` - Log record to process
+    ///
+    /// # Panics
+    /// Panics if there's an error acquiring the write lock
+    ///
+    /// # Behavior
+    /// - Skips processing if record level exceeds configured level
+    /// - Formats timestamp, thread ID, and log target
+    /// - Applies CSS classes based on log level
+    /// - Writes HTML-structured log entry to output
     fn log(&self, record: &Record) {
         if !self.enabled(record.metadata()) {
             return;
@@ -325,6 +387,10 @@ impl<W: Write + Send + 'static> Log for HtmlLogger<W> {
         let _ = write!(write_lock, "{}", message);
     }
 
+    /// Flushes buffered log entries and writes HTML closing tags
+    ///
+    /// # Panics
+    /// Panics if there's an error acquiring the write lock or writing to the output
     fn flush(&self) {
         let mut write_lock = self.writable.lock().unwrap();
         let _ = write_lock.flush();
@@ -333,6 +399,7 @@ impl<W: Write + Send + 'static> Log for HtmlLogger<W> {
 }
 
 impl<W: Write + Send + 'static> Drop for HtmlLogger<W> {
+    /// Ensures proper cleanup by flushing logs when the logger is dropped
     fn drop(&mut self) {
         self.flush();
     }
