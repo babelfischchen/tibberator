@@ -4,7 +4,7 @@
 //! You need an access token in order to use the API.
 pub mod tibber {
     use futures::{future, stream::StreamExt, task::Poll};
-    use log::{debug, error, info};
+    use log::{debug, error, info, warn};
     use serde::{Deserialize, Serialize};
     use std::{
         cell::Cell,
@@ -13,11 +13,11 @@ pub mod tibber {
         time::Instant,
     };
 
-    use data_handling::update_current_energy_price_info;
     pub use data_handling::{
         connect_live_measurement, fetch_home_data, get_home_ids, live_measurement, AccessConfig,
         LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError, PriceInfo,
     };
+    use data_handling::{get_todays_energy_prices, update_current_energy_price_info};
     use output::{print_screen, OutputConfig};
 
     use crate::html_logger::LogConfig;
@@ -145,6 +145,13 @@ pub mod tibber {
         }
 
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
+        let todays_prices = match get_todays_energy_prices(&config.access).await {
+            Ok(prices) => Some((prices.into_iter().map(|p| p.total).collect(), "Energy Prices [EUR/kWh]")),
+            Err(error) => {
+                warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
+                None
+            }
+        };
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -166,6 +173,7 @@ pub mod tibber {
                                 &config.output.get_tax_style(),
                                 current_state,
                                 &current_price_info,
+                                &todays_prices,
                             );
                         }
                     }

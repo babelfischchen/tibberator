@@ -1,10 +1,12 @@
 use crate::tibber::{live_measurement, PriceInfo};
-use chrono::DateTime;
+use chrono::{DateTime, Local, Timelike};
 use crossterm::{
     cursor, execute, queue,
     style::{SetForegroundColor, Stylize},
     terminal::{Clear, ClearType},
 };
+
+use log::warn;
 
 use std::{
     borrow::Borrow,
@@ -85,6 +87,7 @@ pub fn print_screen(
     tax_style: &TaxStyle,
     data: live_measurement::LiveMeasurementLiveMeasurement,
     price_info: &PriceInfo,
+    bar_graph_data: &Option<(Vec<f64>, &str)>,
 ) {
     let tax_string = match tax_style {
         TaxStyle::Price => {
@@ -188,8 +191,97 @@ pub fn print_screen(
     move_cursor(1, None);
 
     stdout().flush().unwrap();
+
+    // display a bar graph if `bar_graph_data` contains Some value
+    if let Some((bar_data, bar_label)) = bar_graph_data {
+        display_bar_graph(bar_data, bar_label);
+    }
 }
 
+/// # `display_bar_graph`
+///
+/// Displays a bar graph based on the provided hourly data.
+///
+/// ## Parameters
+/// - `data`: A vector of f64 values representing hourly data.
+/// - `label`: A string label for the data type (e.g., "Price per kWh" or "Consumption").
+///
+/// ## Behavior
+/// - Clears the terminal screen.
+/// - Displays a bar graph with 24 bars, one for each hourly period.
+/// - Labels the graph with the provided label.
+/// - Logs a warning and quits if the number of data points is not 24.
+///
+pub fn display_bar_graph(data: &Vec<f64>, label: &str) {
+    // Check if the data contains exactly 24 values
+    if data.len() != 24 {
+        warn!(
+            "Warning: The data must contain exactly 24 values. Found {} values.",
+            data.len()
+        );
+        return;
+    }
+
+    let min_value = data.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_value = data.iter().cloned().fold(0.0, f64::max);
+    let bar_height = 15; // Height of the bar graph in rows
+
+    writeln!(stdout(), "\n {}", label).unwrap();
+
+    // Calculate the y-axis labels
+    let y_axis_labels = (0..=bar_height)
+        .map(|i| {
+            let value = min_value + (max_value - min_value) * i as f64 / bar_height as f64;
+            format!("{:8.3} ", value)
+        })
+        .collect::<Vec<_>>();
+
+    // Get the current hour (0-23)
+    let current_hour = Local::now().hour() as usize;
+
+    // Print the bars vertically
+    for row in 0..bar_height + 2 {
+        if row < bar_height {
+            // Print the y-axis label
+            write!(stdout(), "{}", y_axis_labels[bar_height - row]).unwrap();
+        } else if row == bar_height {
+            // Print the x-axis label header
+            write!(stdout(), "        ").unwrap();
+        } else {
+            // Print the hour labels at the bottom
+            write!(stdout(), "        ").unwrap();
+        }
+
+        for (index, &value) in data.iter().enumerate() {
+            let bar_length = if max_value == min_value {
+                1 // Ensure each bar has at least one unit of height if all values are the same
+            } else {
+                let length =
+                    ((value - min_value) / (max_value - min_value) * bar_height as f64) as usize;
+                length.max(1) // Ensure each bar has at least one unit of height
+            };
+            if row == bar_height + 1 {
+                // Print the hour labels at the bottom
+                if index == current_hour {
+                    write!(stdout(), " \x1b[31m{:02}\x1b[0m", index).unwrap(); // Red color for the current hour
+                } else {
+                    write!(stdout(), " {:02}", index).unwrap();
+                }
+            } else if row < bar_height && bar_length >= (bar_height - row) {
+                if index == current_hour {
+                    write!(stdout(), "\x1b[31m█\x1b[0m  ").unwrap(); // Red color for the current hour
+                } else {
+                    write!(stdout(), "█  ").unwrap();
+                }
+            } else {
+                write!(stdout(), "   ").unwrap();
+            }
+        }
+        writeln!(stdout()).unwrap();
+    }
+
+    stdout().flush().unwrap();
+}
 #[cfg(test)]
 mod tests {
     use super::*;

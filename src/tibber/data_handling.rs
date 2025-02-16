@@ -24,7 +24,7 @@ use tokio::time::timeout;
 #[graphql(
     schema_path = "tibber/schema.json",
     query_path = "tibber/home.graphql",
-    respone_derives = "Debug"
+    response_derives = "Debug"
 )]
 pub struct Home;
 
@@ -33,7 +33,7 @@ pub struct Home;
 #[graphql(
     schema_path = "tibber/schema.json",
     query_path = "tibber/view.graphql",
-    respone_derives = "Debug"
+    response_derives = "Debug"
 )]
 pub struct Viewer;
 
@@ -42,7 +42,7 @@ pub struct Viewer;
 #[graphql(
     schema_path = "tibber/schema.json",
     query_path = "tibber/livemeasurement.graphql",
-    respone_derives = "Debug"
+    response_derives = "Debug"
 )]
 pub struct LiveMeasurement;
 
@@ -51,9 +51,86 @@ pub struct LiveMeasurement;
 #[graphql(
     schema_path = "tibber/schema.json",
     query_path = "tibber/price_current.graphql",
-    respone_derives = "Debug"
+    response_derives = "Debug"
 )]
 struct PriceCurrent;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "tibber/schema.json",
+    query_path = "tibber/price_hourly.graphql",
+    response_derives = "Debug"
+)]
+struct PriceHourly;
+
+/// Trait to define the common fields required for parsing price info.
+trait PriceInfoFields {
+    fn total(&self) -> Option<f64>;
+    fn energy(&self) -> Option<f64>;
+    fn tax(&self) -> Option<f64>;
+    fn starts_at(&self) -> Option<String>;
+    fn level(&self) -> PriceLevel;
+    fn currency(&self) -> String;
+}
+
+impl PriceInfoFields for price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent {
+    fn total(&self) -> Option<f64> {
+        self.total
+    }
+    fn energy(&self) -> Option<f64> {
+        self.energy
+    }
+    fn tax(&self) -> Option<f64> {
+        self.tax
+    }
+    fn starts_at(&self) -> Option<String> {
+        self.starts_at.clone()
+    }
+    fn level(&self) -> PriceLevel {
+        match &self.level {
+            Some(price_current::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
+            Some(price_current::PriceLevel::CHEAP) => PriceLevel::Cheap,
+            Some(price_current::PriceLevel::NORMAL) => PriceLevel::Normal,
+            Some(price_current::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
+            Some(price_current::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
+            Some(price_current::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
+            _ => PriceLevel::None,
+        }
+    }
+    fn currency(&self) -> String {
+        self.currency.clone()
+    }
+}
+
+impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoToday {
+    fn total(&self) -> Option<f64> {
+        self.total
+    }
+    fn energy(&self) -> Option<f64> {
+        self.energy
+    }
+    fn tax(&self) -> Option<f64> {
+        self.tax
+    }
+    fn starts_at(&self) -> Option<String> {
+        self.starts_at.clone()
+    }
+    fn level(&self) -> PriceLevel {
+        match &self.level {
+            Some(price_hourly::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
+            Some(price_hourly::PriceLevel::CHEAP) => PriceLevel::Cheap,
+            Some(price_hourly::PriceLevel::NORMAL) => PriceLevel::Normal,
+            Some(price_hourly::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
+            Some(price_hourly::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
+            Some(price_hourly::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
+            _ => PriceLevel::None,
+        }
+    }
+    fn currency(&self) -> String {
+        self.currency.clone()
+    }
+}
+
 
 /// `LoopEndingError` is an enum that represents the different types of errors that can occur when a loop ends.
 /// It can be one of the following: `Shutdown`, `Reconnect`, or `InvalidData`.
@@ -122,39 +199,51 @@ pub struct PriceInfo {
 }
 
 impl PriceInfo {
-    /// The `new_current` method for `PriceInfo` provides a way to create a new instance of `PriceInfo` from a given `price_info` representing the current energy prices.
-    fn new_current(
-        price_info: price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent,
-    ) -> Option<Self> {
-        let total = price_info.total?;
-        let energy = price_info.energy?;
-        let tax = price_info.tax?;
+    fn parse_price_info(price_info: &impl PriceInfoFields) -> Option<Self>
+    {
+        let total = price_info.total()?;
+        let energy = price_info.energy()?;
+        let tax = price_info.tax()?;
+        let currency = price_info.currency();
         let starts_at = chrono::DateTime::parse_from_rfc3339(
-            price_info.starts_at.ok_or("No timestamp").ok()?.as_str(),
+            price_info.starts_at().ok_or("No timestamp").ok()?.as_str(),
         )
         .ok()?;
-
-        let price_level = match price_info.level {
-            Some(price_current::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
-            Some(price_current::PriceLevel::CHEAP) => PriceLevel::Cheap,
-            Some(price_current::PriceLevel::NORMAL) => PriceLevel::Normal,
-            Some(price_current::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
-            Some(price_current::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
-            Some(price_current::PriceLevel::Other(string)) => PriceLevel::Other(string),
-            _ => PriceLevel::None,
-        };
+        let price_level = price_info.level();
 
         Some(PriceInfo {
             total,
             energy,
             tax,
+            currency,
             starts_at,
-            currency: price_info.currency,
             level: price_level,
         })
     }
-}
 
+    /// The `new_current` method for `PriceInfo` provides a way to create a new instance of `PriceInfo` from a given `price_info` representing the current energy prices.
+    fn new_current(
+        price_info: price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent,
+    ) -> Option<Self> {
+        Self::parse_price_info(&price_info)
+    }
+
+    fn new_hourly(
+        all_price_info: price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfo,
+    ) -> Option<Vec<PriceInfo>> {
+        let mut price_infos = Vec::new();
+
+        for hour in all_price_info.today {
+            if let Some(current_hour) = hour {
+                if let Some(price_info) = Self::parse_price_info(&current_hour) {
+                    price_infos.push(price_info);
+                }
+            }
+        }
+
+        Some(price_infos)
+    }
+}
 impl PriceLevel {
     /// Converts a `PriceLevel` variant to a corresponding text color using crossterm.
     ///
@@ -541,6 +630,48 @@ async fn get_current_energy_price(
     }
 
     PriceInfo::new_current(price_info.current.ok_or(LoopEndingError::InvalidData)?)
+        .ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+/// Retrieves today's hourly energy price information based on the provided configuration.
+///
+/// This asynchronous function fetches data using the given `config` and constructs a `Vec<PriceInfo>`
+/// struct representing today's hourly energy prices. If successful, it returns the `Vec<PriceInfo>`.
+/// Otherwise, it returns an error wrapped in a `Box<dyn std::error::Error>`.
+///
+/// ## Arguments
+///
+/// * `config`: A reference to the `AccessConfig` containing necessary information for fetching data.
+///
+/// ## Returns
+///
+/// * `Result<Vec<PriceInfo>, Box<dyn std::error::Error>>`: Today's hourly energy prices or an error.
+///
+pub async fn get_todays_energy_prices(
+    config: &AccessConfig,
+) -> Result<Vec<PriceInfo>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.price", "Fetching today's energy prices.");
+
+    let id = config.home_id.to_owned();
+    let variables = price_hourly::Variables { id };
+    let price_data_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<PriceHourly>(config, variables),
+    )
+    .await?;
+
+    let price_info = price_data_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .current_subscription
+        .and_then(|info| info.price_info)
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    info!(target: "tibberator.price", "Received hourly price data");
+
+    PriceInfo::new_hourly(price_info)
         .ok_or(Box::new(LoopEndingError::InvalidData))
 }
 
