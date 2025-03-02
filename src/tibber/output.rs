@@ -282,7 +282,7 @@ pub fn display_bar_graph(data: &Vec<f64>, label: &str) {
                 } else {
                     write!(stdout(), " {:02}", index).unwrap();
                 }
-            } else if row < bar_height && bar_length >= (bar_height - row) {
+            } else if row < bar_height && bar_length >= (bar_height - row) && value > 0.0 {
                 if index == current_hour {
                     write!(stdout(), "\x1b[31m█\x1b[0m  ").unwrap(); // Red color for the current hour
                 } else {

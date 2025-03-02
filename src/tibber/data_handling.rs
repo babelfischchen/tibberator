@@ -290,8 +290,8 @@ impl ConsumptionNode {
     ) -> Option<Self> {
         let from = chrono::DateTime::parse_from_rfc3339(consumption_data.from.as_str()).ok()?;
         let to = chrono::DateTime::parse_from_rfc3339(consumption_data.to.as_str()).ok()?;
-        let consumption = consumption_data.consumption?;
-        let cost = consumption_data.cost?;
+        let consumption = consumption_data.consumption.unwrap_or(0.0);
+        let cost = consumption_data.cost.unwrap_or(0.0);
 
         Some(ConsumptionNode {
             from,
@@ -1075,10 +1075,9 @@ mod tests {
         let consumption_nodes = result.unwrap();
         assert_eq!(consumption_nodes.len(), 24, "Should have 24 hourly entries");
 
-        let current_hour = Local::now().hour();
-
+        let current_hour = Utc::now().hour();
         for node in consumption_nodes.into_iter() {
-            let hour = node.from.hour();
+            let hour = node.from.with_timezone(&Utc).hour();
 
             if hour >= current_hour {
                 assert_eq!(
