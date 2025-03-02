@@ -34,18 +34,26 @@ pub enum TaxStyle {
 
 /// `OutputConfig` is a struct that represents the configuration for output.
 /// It contains the following fields: `output_type` and `tax_style`.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub enum DisplayMode {
+    Prices,
+    Consumption,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,
+    pub display_mode: DisplayMode,
 }
 
-/// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full` and `tax_style` as `Price`.
+/// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full`, `tax_style` as `Price`, and `display_mode` as `Prices`.
 impl Default for OutputConfig {
     fn default() -> Self {
         OutputConfig {
             output_type: OutputType::Full,
             tax_style: TaxStyle::Price,
+            display_mode: DisplayMode::Prices,
         }
     }
 }
@@ -56,12 +64,19 @@ impl OutputConfig {
         self.output_type == OutputType::Silent
     }
 
-    /// The `new` method for `OutputConfig` provides a way to create a new instance of `OutputConfig` with a given `output_type` and `tax_style` as `None`.
+    /// The `new` method for `OutputConfig` provides a way to create a new instance of `OutputConfig` with a given `output_type`, `tax_style` as `None`, and `display_mode` as `Prices`.
     pub fn new(output_type: OutputType) -> Self {
         OutputConfig {
             output_type,
             tax_style: TaxStyle::None,
+            display_mode: DisplayMode::Prices,
         }
+    }
+
+    /// Creates a new OutputConfig with the specified display mode
+    pub fn with_display_mode(mut self, display_mode: DisplayMode) -> Self {
+        self.display_mode = display_mode;
+        self
     }
 
     /// The `get_tax_style` method for `OutputConfig` provides a way to get a reference to the `tax_style`.

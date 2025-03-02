@@ -4,7 +4,7 @@ use async_tungstenite::{
     tungstenite::handshake::client::{generate_key, Response},
     WebSocketStream,
 };
-use chrono::{DateTime, Duration, FixedOffset, Utc};
+use chrono::{DateTime, Duration, FixedOffset, Local, TimeZone, Utc};
 use crossterm::style;
 use graphql_client::{reqwest::post_graphql, GraphQLQuery};
 use graphql_ws_client::{graphql::StreamingOperation, Client as WSClient, Subscription};
@@ -62,6 +62,14 @@ struct PriceCurrent;
     response_derives = "Debug"
 )]
 struct PriceHourly;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "tibber/schema.json",
+    query_path = "tibber/consumption_hourly.graphql",
+    response_derives = "Debug"
+)]
+struct ConsumptionHourly;
 
 /// Trait to define the common fields required for parsing price info.
 trait PriceInfoFields {
@@ -131,7 +139,6 @@ impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionP
     }
 }
 
-
 /// `LoopEndingError` is an enum that represents the different types of errors that can occur when a loop ends.
 /// It can be one of the following: `Shutdown`, `Reconnect`, or `InvalidData`.
 #[derive(Debug, Error, PartialEq)]
@@ -199,8 +206,7 @@ pub struct PriceInfo {
 }
 
 impl PriceInfo {
-    fn parse_price_info(price_info: &impl PriceInfoFields) -> Option<Self>
-    {
+    fn parse_price_info(price_info: &impl PriceInfoFields) -> Option<Self> {
         let total = price_info.total()?;
         let energy = price_info.energy()?;
         let tax = price_info.tax()?;
@@ -265,6 +271,89 @@ impl PriceLevel {
             PriceLevel::VeryExpensive => Some(style::Color::DarkRed),
             _ => None,
         }
+    }
+}
+
+/// `ConsumptionNode` is a struct that represents a single consumption data point.
+#[derive(Debug, Clone)]
+pub struct ConsumptionNode {
+    pub from: DateTime<FixedOffset>,
+    pub to: DateTime<FixedOffset>,
+    pub consumption: f64,
+    pub cost: f64,
+}
+
+impl ConsumptionNode {
+    /// Parses a single consumption data point and returns a `ConsumptionNode`.
+    fn parse_consumption_node(
+        consumption_data: &consumption_hourly::ConsumptionHourlyViewerHomeConsumptionNodes,
+    ) -> Option<Self> {
+        let from = chrono::DateTime::parse_from_rfc3339(consumption_data.from.as_str()).ok()?;
+        let to = chrono::DateTime::parse_from_rfc3339(consumption_data.to.as_str()).ok()?;
+        let consumption = consumption_data.consumption?;
+        let cost = consumption_data.cost?;
+
+        Some(ConsumptionNode {
+            from,
+            to,
+            consumption,
+            cost,
+        })
+    }
+
+    /// The `new_nodes` method for `ConsumptionNode` provides a way to create a vector of `ConsumptionNode` instances from a given list of consumption data.
+    fn new_nodes(
+        consumption_list: consumption_hourly::ConsumptionHourlyViewerHomeConsumption,
+    ) -> Option<Vec<Self>> {
+        let mut nodes = Vec::new();
+
+        for consumption_data in consumption_list.nodes?.into_iter() {
+            if let Some(node) = consumption_data {
+                if let Some(parsed_node) = Self::parse_consumption_node(&node) {
+                    nodes.push(parsed_node);
+                }
+            }
+        }
+
+        Some(nodes)
+    }
+
+    /// The `new_nodes_today` method for `ConsumptionNode` provides a way to create a vector of `ConsumptionNode` instances from a given list of consumption data,
+    /// filtering only those nodes that belong to the current day and filling in missing hours with 0 values for consumption and cost.
+    fn new_nodes_today(
+        consumption_list: consumption_hourly::ConsumptionHourlyViewerHomeConsumption,
+    ) -> Option<Vec<Self>> {
+        let nodes = Self::new_nodes(consumption_list)?;
+
+        let today = Utc::now().date_naive();
+        let timezone = Local;
+        let mut hourly_nodes = Vec::new();
+
+        // Generate hourly nodes for the current day
+        for hour in 0..24 {
+            let from = today
+                .and_hms_opt(hour, 0, 0)?
+                .and_local_timezone(timezone.offset_from_utc_date(&today))
+                .single()?;
+            let to = from + Duration::hours(1);
+
+            // Check if there is an existing node for this hour
+            if let Some(existing_node) =
+                nodes.iter().find(|node| node.from == from && node.to == to)
+            {
+                hourly_nodes.push(existing_node.clone());
+            } else {
+                // If no existing node, create a new one with 0 consumption and cost
+                hourly_nodes.push(ConsumptionNode {
+                    from,
+                    to,
+                    consumption: 0.0,
+                    cost: 0.0,
+                });
+            }
+        }
+
+        Some(hourly_nodes)
     }
 }
 
@@ -671,8 +760,47 @@ pub async fn get_todays_energy_prices(
 
     info!(target: "tibberator.price", "Received hourly price data");
 
-    PriceInfo::new_hourly(price_info)
-        .ok_or(Box::new(LoopEndingError::InvalidData))
+    PriceInfo::new_hourly(price_info).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+/// Retrieves today's hourly energy consumption information based on the provided configuration.
+///
+/// This asynchronous function fetches data using the given `config` and constructs a `Vec<ConsumptionNode>`
+/// struct representing today's hourly energy consumption. If successful, it returns the `Vec<ConsumptionNode>`.
+/// Otherwise, it returns an error wrapped in a `Box<dyn std::error::Error>`.
+///
+/// ## Arguments
+///
+/// * `config`: A reference to the `AccessConfig` containing necessary information for fetching data.
+///
+/// ## Returns
+///
+/// * `Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>>`: Today's hourly energy consumption or an error.
+///
+pub async fn get_todays_energy_consumption(
+    config: &AccessConfig,
+) -> Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.consumption", "Fetching today's energy consumption.");
+
+    let id = config.home_id.to_owned();
+    let variables = consumption_hourly::Variables { id };
+    let consumption_data_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<ConsumptionHourly>(config, variables),
+    )
+    .await?;
+
+    let consumption_data = consumption_data_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .consumption
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    info!(target: "tibberator.consumption", "Received hourly consumption data");
+
+    ConsumptionNode::new_nodes_today(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
 }
 
 /// Updates or retrieves the current energy price information based on the provided configuration and existing price info.
@@ -828,6 +956,7 @@ pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
     use serial_test::serial;
     use tokio::time::timeout;
 
@@ -934,5 +1063,36 @@ mod tests {
 
         let stop_result = subscription.stop().await;
         assert!(stop_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_todays_energy_consumption() {
+        let config = AccessConfig::default();
+
+        let result = get_todays_energy_consumption(&config).await;
+        assert!(result.is_ok());
+
+        let consumption_nodes = result.unwrap();
+        assert_eq!(consumption_nodes.len(), 24, "Should have 24 hourly entries");
+
+        let current_hour = Local::now().hour();
+
+        for node in consumption_nodes.into_iter() {
+            let hour = node.from.hour();
+
+            if hour >= current_hour {
+                assert_eq!(
+                    node.consumption, 0.0,
+                    "Consumption should be 0 for future hours"
+                );
+                assert_eq!(node.cost, 0.0, "Cost should be 0 for future hours");
+            } else {
+                assert!(
+                    node.consumption >= 0.0,
+                    "Consumption should be non-negative"
+                );
+                assert!(node.cost >= 0.0, "Cost should be non-negative");
+            }
+        }
     }
 }

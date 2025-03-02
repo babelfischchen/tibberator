@@ -1,0 +1,14 @@
+query ConsumptionHourly($id: ID!) {
+  viewer {
+    home(id: $id) {
+      consumption(resolution: HOURLY, last: 24) {
+        nodes {
+          from
+          to
+          consumption
+          cost
+        }
+      }
+    }
+  }
+}

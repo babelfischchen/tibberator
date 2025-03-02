@@ -1,4 +1,5 @@
 use std::{
+    fs::{create_dir_all, File},
     io::{stdin, stdout, Read, Write},
     process::ExitCode,
     sync::mpsc::{self, Receiver},
@@ -19,7 +20,6 @@ use exitcode;
 use futures::executor::block_on;
 use log::{error, info, SetLoggerError};
 use rand::Rng;
-use std::fs::{create_dir_all, File};
 use tokio::time;
 
 use tibberator::tibber::{
@@ -53,6 +53,15 @@ fn get_config() -> Result<Config, confy::ConfyError> {
     if let Some(home_id) = matches.value_of("home_id") {
         let mut config: Config = confy::load("Tibberator", "config")?;
         config.access.home_id = String::from(home_id);
+        confy::store(app_name, config_name, config)?;
+    }
+
+    if let Some(display_mode) = matches.value_of("display_mode") {
+        let mut config: Config = confy::load("Tibberator", "config")?;
+        config.output.display_mode = match display_mode {
+            "consumption" => tibberator::tibber::output::DisplayMode::Consumption,
+            _ => tibberator::tibber::output::DisplayMode::Prices,
+        };
         confy::store(app_name, config_name, config)?;
     }
 
@@ -161,6 +170,15 @@ config.yaml found in the Tibberator app_data directory.",
                 .value_name("home_id")
                 .help("Sets a custom home_id to access your Tibber data.")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("display_mode")
+                .short('d')
+                .long("display")
+                .value_name("mode")
+                .help("Sets the display mode: 'prices' or 'consumption'")
+                .takes_value(true)
+                .possible_values(&["prices", "consumption"])
         )
         .get_matches()
 }
@@ -314,7 +332,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscription_loop() {
-        let config = get_test_config();
+        let mut config = get_test_config();
+        // Ensure display_mode is set for the test
+        config.output.display_mode = tibberator::tibber::output::DisplayMode::Prices;
         let (sender, receiver) = channel();
         let subscription = subscription_loop(config, receiver);
         sleep(time::Duration::from_secs(5)).await;

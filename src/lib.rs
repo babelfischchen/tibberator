@@ -15,15 +15,18 @@ pub mod tibber {
 
     pub use data_handling::{
         connect_live_measurement, fetch_home_data, get_home_ids, live_measurement, AccessConfig,
-        LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError, PriceInfo,
+        ConsumptionNode, LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError,
+        PriceInfo,
     };
-    use data_handling::{get_todays_energy_prices, update_current_energy_price_info};
+    use data_handling::{
+        get_todays_energy_consumption, get_todays_energy_prices, update_current_energy_price_info,
+    };
     use output::{print_screen, OutputConfig};
 
     use crate::html_logger::LogConfig;
 
     mod data_handling;
-    mod output;
+    pub mod output;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct Config {
@@ -58,7 +61,7 @@ pub mod tibber {
     /// - `false`: Indicates that no shutdown request was received within the timeout.
     ///
     /// ## Example
-    /// ```
+    /// ```rust
     ///   use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
     ///   use std::time::Duration;
     ///   use tibberator::tibber::check_user_shutdown;
@@ -101,7 +104,7 @@ pub mod tibber {
     /// - `Err(LoopEndingError::InvalidData)`: Indicates no valid data received during the loop.
     ///
     /// ## Example
-    /// ```
+    /// ```rust
     ///   use std::sync::mpsc::{channel, Receiver};
     ///   use tibberator::tibber::{
     ///                            Config, loop_for_data,
@@ -118,7 +121,7 @@ pub mod tibber {
     ///     std::thread::sleep(time::Duration::from_secs(3));
     ///     sender.send(true).unwrap();
     ///   });
-    ///   let result = loop_for_data(&config, &mut subscription, &receiver).await;
+    ///   let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
     ///   assert!(result.is_ok());
     /// # }
     /// ```
@@ -145,13 +148,9 @@ pub mod tibber {
         }
 
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
-        let todays_prices = match get_todays_energy_prices(&config.access).await {
-            Ok(prices) => Some((prices.into_iter().map(|p| p.total).collect(), "Energy Prices [EUR/kWh]")),
-            Err(error) => {
-                warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
-                None
-            }
-        };
+
+        // Fetch data based on display mode configuration
+        let display_data = fetch_display_data(&config).await?;
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -173,7 +172,7 @@ pub mod tibber {
                                 &config.output.get_tax_style(),
                                 current_state,
                                 &current_price_info,
-                                &todays_prices,
+                                &display_data,
                             );
                         }
                     }
@@ -199,6 +198,35 @@ pub mod tibber {
             }
             Some(LoopEndingError::Reconnect) => Err(Box::new(LoopEndingError::Reconnect)),
             _ => Err(Box::new(LoopEndingError::InvalidData)),
+        }
+    }
+
+    async fn fetch_display_data(
+        config: &Config,
+    ) -> Result<Option<(Vec<f64>, &'static str)>, Box<dyn std::error::Error>> {
+        match config.output.display_mode {
+            output::DisplayMode::Prices => match get_todays_energy_prices(&config.access).await {
+                Ok(prices) => Ok(Some((
+                    prices.into_iter().map(|p| p.total).collect(),
+                    "Energy Prices [EUR/kWh]",
+                ))),
+                Err(error) => {
+                    warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
+                    Ok(None)
+                }
+            },
+            output::DisplayMode::Consumption => {
+                match get_todays_energy_consumption(&config.access).await {
+                    Ok(consumption) => Ok(Some((
+                        consumption.into_iter().map(|c| c.consumption).collect(),
+                        "Energy Consumption [kWh]",
+                    ))),
+                    Err(error) => {
+                        warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
+                        Ok(None)
+                    }
+                }
+            }
         }
     }
 
@@ -253,7 +281,7 @@ pub mod tibber {
         async fn test_loop_for_data() {
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent),
+                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
@@ -273,7 +301,7 @@ pub mod tibber {
         async fn test_loop_for_data_invalid_home_id() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent),
+                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             config.access.home_id.pop();
@@ -300,7 +328,7 @@ pub mod tibber {
         async fn test_loop_for_data_connection_timeout() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent),
+                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             config.access.reconnect_timeout = 0;
@@ -314,6 +342,44 @@ pub mod tibber {
             assert!(error_type.is_ok());
             assert_eq!(*error_type.unwrap(), LoopEndingError::Reconnect);
             subscription.stop().await.unwrap();
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_fetch_display_data() {
+            // Test Prices mode
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                logging: LogConfig::default(),
+            };
+
+            let result = fetch_display_data(&config).await;
+            assert!(result.is_ok());
+            let display_data = result.unwrap();
+            assert!(display_data.is_some());
+
+            if let Some((prices, description)) = display_data {
+                assert_eq!(prices.len(), 24);
+                assert_eq!(description, "Energy Prices [EUR/kWh]");
+            }
+
+            // Test Consumption mode
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Consumption),
+                logging: LogConfig::default(),
+            };
+
+            let result = fetch_display_data(&config).await;
+            assert!(result.is_ok());
+            let display_data = result.unwrap();
+            assert!(display_data.is_some());
+
+            if let Some((consumption, description)) = display_data {
+                assert_eq!(consumption.len(), 24);
+                assert_eq!(description, "Energy Consumption [kWh]");
+            }
         }
     }
 }
