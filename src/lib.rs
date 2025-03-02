@@ -121,7 +121,7 @@ pub mod tibber {
     ///     std::thread::sleep(time::Duration::from_secs(3));
     ///     sender.send(true).unwrap();
     ///   });
-    ///   let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+    ///   let result = loop_for_data(&config, &mut subscription, &receiver).await;
     ///   assert!(result.is_ok());
     /// # }
     /// ```
