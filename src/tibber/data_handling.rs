@@ -956,7 +956,6 @@ pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Timelike;
     use serial_test::serial;
     use tokio::time::timeout;
 
@@ -1075,11 +1074,11 @@ mod tests {
         let consumption_nodes = result.unwrap();
         assert_eq!(consumption_nodes.len(), 24, "Should have 24 hourly entries");
 
-        let current_hour = Utc::now().hour();
+        let current_time = Utc::now();
         for node in consumption_nodes.into_iter() {
-            let hour = node.from.with_timezone(&Utc).hour();
+            let converted_node_time = node.from.with_timezone(&Utc);
 
-            if hour >= current_hour {
+            if converted_node_time >= current_time {
                 assert_eq!(
                     node.consumption, 0.0,
                     "Consumption should be 0 for future hours"
