@@ -120,6 +120,7 @@ async fn main() -> ExitCode {
         bar_graph_data: None,
         display_mode: config.output.display_mode,
         status: String::from("Waiting for data..."),
+        data_needs_refresh: false,
     }));
 
     // Clone app_state for the subscription thread
@@ -384,20 +385,21 @@ async fn subscription_loop_tui(
     }
 
     // Fetch display data based on display mode
-    match tibberator::tibber::fetch_display_data(&config).await {
-        Ok(Some((data, label))) => {
-            // Update app state with bar graph data
-            let mut state = app_state.lock().unwrap();
-            state.bar_graph_data = Some((data, label.to_string()));
-        }
-        Ok(None) => {
-            info!(target: "tibberator.mainloop", "No display data available");
-        }
-        Err(err) => {
-            error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
+    {
+        let mut state = app_state.lock().unwrap();
+        match tibberator::tibber::fetch_display_data(&config.access, &state.display_mode).await {
+            Ok(Some((data, label))) => {
+                // Update app state with bar graph data
+                state.bar_graph_data = Some((data, label.to_string()));
+            }
+            Ok(None) => {
+                info!(target: "tibberator.mainloop", "No display data available");
+            }
+            Err(err) => {
+                error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
+            }
         }
     }
-
     // Create a custom data handler that updates the app state
     let data_handler =
         |data: tibberator::tibber::live_measurement::LiveMeasurementLiveMeasurement| {
@@ -425,6 +427,29 @@ async fn subscription_loop_tui(
 
     // Main subscription loop
     while !app_state.lock().unwrap().should_quit {
+        // Check if data needs refresh
+        {
+            let cloned_app_state = app_state.clone();
+            let mut state = cloned_app_state.lock().unwrap();
+
+            if state.data_needs_refresh {
+                match tibberator::tibber::fetch_display_data(&config.access, &state.display_mode)
+                    .await
+                {
+                    Ok(Some((data, label))) => {
+                        state.bar_graph_data = Some((data, label.to_string()));
+                    }
+                    Ok(None) => {
+                        info!(target: "tibberator.mainloop", "No display data available");
+                    }
+                    Err(err) => {
+                        error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
+                    }
+                }
+                state.data_needs_refresh = false;
+            }
+        }
+
         // Process data from subscription
         let result = process_subscription_data(
             &config,

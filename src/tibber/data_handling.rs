@@ -949,12 +949,10 @@ pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementS
     match subscription {
         Ok(result) => {
             info!(target: "tibberator.connection", "Successfully connected to Tibber service.");
-            println!("Connection established");
             result
         }
         Err(error) => {
             error!(target: "tibberator.connection", "Failed to connect to Tibber service: {:?}", error);
-            println!("{:?}", error);
             std::process::exit(exitcode::PROTOCOL);
         }
     }

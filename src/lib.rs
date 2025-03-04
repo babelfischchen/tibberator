@@ -19,7 +19,7 @@ pub mod tibber {
         ConsumptionNode, LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError,
         PriceInfo,
     };
-    use output::{print_screen, OutputConfig};
+    use output::{print_screen, DisplayMode, OutputConfig};
 
     use crate::html_logger::LogConfig;
 
@@ -148,7 +148,7 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         // Fetch data based on display mode configuration
-        let display_data = fetch_display_data(&config).await?;
+        let display_data = fetch_display_data(&config.access, &config.output.display_mode).await?;
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -200,10 +200,11 @@ pub mod tibber {
     }
 
     pub async fn fetch_display_data(
-        config: &Config,
+        access_config: &AccessConfig,
+        display_mode: &DisplayMode,
     ) -> Result<Option<(Vec<f64>, &'static str)>, Box<dyn std::error::Error>> {
-        match config.output.display_mode {
-            output::DisplayMode::Prices => match get_todays_energy_prices(&config.access).await {
+        match display_mode {
+            output::DisplayMode::Prices => match get_todays_energy_prices(access_config).await {
                 Ok(prices) => Ok(Some((
                     prices.into_iter().map(|p| p.total).collect(),
                     "Energy Prices [EUR/kWh]",
@@ -214,7 +215,7 @@ pub mod tibber {
                 }
             },
             output::DisplayMode::Consumption => {
-                match get_todays_energy_consumption(&config.access).await {
+                match get_todays_energy_consumption(&access_config).await {
                     Ok(consumption) => Ok(Some((
                         consumption.into_iter().map(|c| c.consumption).collect(),
                         "Energy Consumption [kWh]",
@@ -356,7 +357,7 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config).await;
+            let result = fetch_display_data(&config.access, &config.output.display_mode).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
@@ -374,7 +375,8 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config).await;
+            let result =
+                fetch_display_data(&config.access, &config.output.display_mode).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
