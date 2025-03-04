@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// `OutputType` is an enum that represents the different types of output.
 /// It can be one of the following: `Full` or `Silent`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum OutputType {
     Full,
     Silent,
@@ -25,7 +25,7 @@ pub enum OutputType {
 
 /// `TaxStyle` is an enum that represents the different styles of tax.
 /// It can be one of the following: `Price`, `Percent`, or `None`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum TaxStyle {
     Price,
     Percent,
@@ -34,13 +34,13 @@ pub enum TaxStyle {
 
 /// `OutputConfig` is a struct that represents the configuration for output.
 /// It contains the following fields: `output_type` and `tax_style`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum DisplayMode {
     Prices,
     Consumption,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,

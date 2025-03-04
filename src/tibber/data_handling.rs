@@ -154,7 +154,7 @@ pub enum LoopEndingError {
 }
 
 /// `AccessConfig` is a struct that represents the configuration for accessing the Tibber service.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AccessConfig {
     pub token: String,
     url: String,
@@ -887,7 +887,7 @@ async fn create_subscription(
 ///
 async fn get_live_measurement(
     config: &AccessConfig,
-) -> Result<LiveMeasurementSubscription, graphql_ws_client::Error> {
+) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
     let id = config.home_id.to_owned();
     let variables = live_measurement::Variables { id };
 
@@ -895,12 +895,19 @@ async fn get_live_measurement(
     match websocket {
         Ok(value) => {
             let (websocket, _) = value;
-            create_subscription(&config.token, variables, websocket).await
+            match create_subscription(&config.token, variables, websocket).await {
+                Ok(subscription) => Ok(subscription),
+                Err(error) => Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    String::from("Subscription creation error: ") + error.to_string().as_str(),
+                ))),
+            }
         }
         Err(error) => {
-            return Err(graphql_ws_client::Error::Unknown(
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
                 String::from("Websocket creation error: ") + error.to_string().as_str(),
-            ));
+            )));
         }
     }
 }

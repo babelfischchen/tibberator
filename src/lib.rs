@@ -14,12 +14,10 @@ pub mod tibber {
     };
 
     pub use data_handling::{
-        connect_live_measurement, fetch_home_data, get_home_ids, live_measurement, AccessConfig,
+        connect_live_measurement, fetch_home_data, get_home_ids, get_todays_energy_consumption,
+        get_todays_energy_prices, live_measurement, update_current_energy_price_info, AccessConfig,
         ConsumptionNode, LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError,
         PriceInfo,
-    };
-    use data_handling::{
-        get_todays_energy_consumption, get_todays_energy_prices, update_current_energy_price_info,
     };
     use output::{print_screen, OutputConfig};
 
@@ -27,6 +25,7 @@ pub mod tibber {
 
     mod data_handling;
     pub mod output;
+    pub mod tui;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct Config {
@@ -44,7 +43,6 @@ pub mod tibber {
             }
         }
     }
-
     /// # `check_user_shutdown`
     ///
     /// ## Description
@@ -132,7 +130,7 @@ pub mod tibber {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let last_value_received = Rc::new(Cell::new(Instant::now()));
         let stop_fun = future::poll_fn(|_cx| {
-            if check_user_shutdown(&receiver) == true {
+            if check_user_shutdown(receiver) {
                 Poll::Ready(LoopEndingError::Shutdown)
             } else if last_value_received.get().elapsed().as_secs()
                 > config.access.reconnect_timeout
@@ -201,7 +199,7 @@ pub mod tibber {
         }
     }
 
-    async fn fetch_display_data(
+    pub async fn fetch_display_data(
         config: &Config,
     ) -> Result<Option<(Vec<f64>, &'static str)>, Box<dyn std::error::Error>> {
         match config.output.display_mode {
@@ -281,7 +279,8 @@ pub mod tibber {
         async fn test_loop_for_data() {
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
@@ -301,7 +300,8 @@ pub mod tibber {
         async fn test_loop_for_data_invalid_home_id() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             config.access.home_id.pop();
@@ -328,7 +328,8 @@ pub mod tibber {
         async fn test_loop_for_data_connection_timeout() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             config.access.reconnect_timeout = 0;
@@ -350,7 +351,8 @@ pub mod tibber {
             // Test Prices mode
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
 
@@ -367,7 +369,8 @@ pub mod tibber {
             // Test Consumption mode
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Consumption),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Consumption),
                 logging: LogConfig::default(),
             };
 
