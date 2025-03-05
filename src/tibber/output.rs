@@ -40,11 +40,21 @@ pub enum DisplayMode {
     Consumption,
 }
 
+/// `GuiMode` is an enum that represents the different modes of the GUI. It can be one of the following: `Simple` or `Advanced`.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum GuiMode {
+    Simple,
+    Advanced,
+}
+
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,
     pub display_mode: DisplayMode,
+    pub gui_mode: GuiMode,
+
 }
 
 /// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full`, `tax_style` as `Price`, and `display_mode` as `Prices`.
@@ -54,6 +64,7 @@ impl Default for OutputConfig {
             output_type: OutputType::Full,
             tax_style: TaxStyle::Price,
             display_mode: DisplayMode::Prices,
+            gui_mode: GuiMode::Advanced,
         }
     }
 }
@@ -70,12 +81,19 @@ impl OutputConfig {
             output_type,
             tax_style: TaxStyle::None,
             display_mode: DisplayMode::Prices,
+            gui_mode: GuiMode::Advanced,
         }
     }
 
     /// Creates a new OutputConfig with the specified display mode
     pub fn with_display_mode(mut self, display_mode: DisplayMode) -> Self {
         self.display_mode = display_mode;
+        self
+    }
+
+    /// Creates a new OutputConfig with the specified gui mode
+    pub fn with_gui_mode(mut self, gui_mode: GuiMode) -> Self {
+        self.gui_mode = gui_mode;
         self
     }
 

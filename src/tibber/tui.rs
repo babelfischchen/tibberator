@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Duration;
 
-use chrono::{Local, Timelike};
+use chrono::{DateTime, Local, Timelike};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -94,14 +94,14 @@ pub fn draw_ui(frame: &mut Frame, app_state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Length(6),    // Main content
-            Constraint::Min(20), // Bar graph
+            Constraint::Length(3), // Header
+            Constraint::Length(6), // Main content
+            Constraint::Min(20),   // Bar graph
         ])
         .split(frame.area());
 
     // Draw the header
-    draw_header(frame, chunks[0]);
+    draw_header(frame, app_state, chunks[0]);
 
     // Draw the main content
     draw_main_content(frame, app_state, chunks[1]);
@@ -111,27 +111,78 @@ pub fn draw_ui(frame: &mut Frame, app_state: &AppState) {
 }
 
 /// Draw the header section
-fn draw_header(frame: &mut Frame, area: Rect) {
+fn draw_header(frame: &mut Frame, app_state: &AppState, area: Rect) {
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    // Title and time
-    let title = "Tibberator";
-    let time = Local::now().format("%H:%M:%S").to_string();
+    draw_title_block(frame, app_state, header_chunks[0]);
+    draw_time_block(frame, app_state, header_chunks[1]);
+}
 
-    let title_block = Block::default()
-        .title(title)
+/// Draw the main title block
+fn draw_title_block(frame: &mut Frame, app_state: &AppState, area: Rect) {
+    // Create a block with borders and title
+    let block = Block::default()
+        .title("Tibber Dashboard")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::from_u32(0x0023B8CC)));
 
-    let time_paragraph = Paragraph::new(time)
-        .block(Block::default().borders(Borders::ALL))
+    // Create the inner area within the block
+    let inner_area = block.inner(area);
+
+    // Render the block itself
+    frame.render_widget(block, area);
+
+    // Create a layout for the content inside the block
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(0)
+        .constraints([Constraint::Min(1)].as_ref())
+        .split(inner_area);
+
+    // Create and render the status text inside the block
+    let status_text = Paragraph::new(app_state.status.to_string())
+        .style(Style::default().fg(Color::from_u32(0x0023B8CC)))
         .alignment(Alignment::Center);
 
-    frame.render_widget(title_block, header_chunks[0]);
-    frame.render_widget(time_paragraph, header_chunks[1]);
+    // Render the status text in the inner area
+    frame.render_widget(status_text, chunks[0]);
+}
+
+fn draw_time_block(frame: &mut Frame, app_state: &AppState, area: Rect) {
+    // Get current time for comparison
+    let now = Local::now();
+
+    // Get and format the timestamp
+    let (time, is_old) = app_state.measurement.as_ref().map_or(
+        (now.format("%H:%M:%S").to_string(), false),
+        |data| {
+            let timestamp = DateTime::parse_from_str(data.timestamp.as_str(), "%+").unwrap();
+            let time_str = timestamp.format("%H:%M:%S").to_string();
+
+            // Calculate if timestamp is more than a minute old
+            let duration = now.signed_duration_since(timestamp.with_timezone(&Local));
+            let is_old = duration.num_seconds() > 60;
+
+            (time_str, is_old)
+        },
+    );
+
+    // Set text color based on timestamp age
+    let color = if is_old {
+        Color::Red
+    } else {
+        Color::White // or whatever your default color is
+    };
+
+    let time_paragraph = Paragraph::new(time)
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(color))
+        .alignment(Alignment::Center);
+
+    frame.render_widget(time_paragraph, area);
 }
 
 /// Draw the main content section

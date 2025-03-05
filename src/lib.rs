@@ -10,6 +10,7 @@ pub mod tibber {
         cell::Cell,
         rc::Rc,
         sync::mpsc::{Receiver, RecvTimeoutError},
+        sync::{Arc, Mutex},
         time::Instant,
     };
 
@@ -20,6 +21,7 @@ pub mod tibber {
         PriceInfo,
     };
     use output::{print_screen, DisplayMode, OutputConfig};
+    use tui::AppState;
 
     use crate::html_logger::LogConfig;
 
@@ -126,11 +128,11 @@ pub mod tibber {
     pub async fn loop_for_data(
         config: &Config,
         subscription: &mut LiveMeasurementSubscription,
-        receiver: &Receiver<bool>,
+        app_state: Arc<Mutex<AppState>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let last_value_received = Rc::new(Cell::new(Instant::now()));
         let stop_fun = future::poll_fn(|_cx| {
-            if check_user_shutdown(receiver) {
+            if app_state.lock().unwrap().should_quit {
                 Poll::Ready(LoopEndingError::Shutdown)
             } else if last_value_received.get().elapsed().as_secs()
                 > config.access.reconnect_timeout
@@ -236,8 +238,19 @@ pub mod tibber {
         use data_handling::connect_live_measurement;
         use output::OutputType;
         use serial_test::serial;
-        use std::sync::mpsc::channel;
         use tokio::time::{timeout, Duration as TokioDuration};
+
+        fn create_app_state() -> Arc<Mutex<AppState>> {
+            Arc::new(Mutex::new(AppState {
+                should_quit: false,
+                measurement: None,
+                price_info: None,
+                bar_graph_data: None,
+                display_mode: DisplayMode::Prices,
+                status: String::from("Waiting for data..."),
+                data_needs_refresh: false,
+            }))
+        }
 
         #[tokio::test]
         async fn test_update_price_after_one_hour() {
@@ -281,15 +294,16 @@ pub mod tibber {
             let config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices),
+                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (sender, receiver) = channel();
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver);
+            let result = loop_for_data(&config, subscription.as_mut(), app_state.clone());
             tokio::time::sleep(TokioDuration::from_secs(10)).await;
-            sender.send(true).unwrap();
+            app_state.lock().unwrap().should_quit = true;
             let result = timeout(std::time::Duration::from_secs(30), result).await;
             assert!(result.is_ok());
             assert!(result.unwrap().is_ok());
@@ -302,16 +316,17 @@ pub mod tibber {
             let mut config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices),
+                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
             config.access.home_id.pop();
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (_sender, receiver) = channel();
             let result = timeout(
                 std::time::Duration::from_secs(10),
-                loop_for_data(&config, subscription.as_mut(), &receiver),
+                loop_for_data(&config, subscription.as_mut(), app_state),
             )
             .await;
             assert!(result.is_ok());
@@ -335,9 +350,9 @@ pub mod tibber {
             };
             config.access.reconnect_timeout = 0;
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (_sender, receiver) = channel();
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            let result = loop_for_data(&config, subscription.as_mut(), app_state).await;
             assert!(result.as_ref().is_err());
             let error = result.err().unwrap();
             let error_type = error.downcast::<LoopEndingError>();
@@ -375,8 +390,7 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result =
-                fetch_display_data(&config.access, &config.output.display_mode).await;
+            let result = fetch_display_data(&config.access, &config.output.display_mode).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());

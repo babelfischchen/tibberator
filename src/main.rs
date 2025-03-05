@@ -2,9 +2,11 @@ use std::{
     cell::Cell,
     fs::{create_dir_all, File},
     io::{stdin, stdout, Read, Write},
+    ops::DerefMut,
     process::ExitCode,
     rc::Rc,
     sync::{Arc, Mutex},
+    thread::sleep,
     time::Instant,
 };
 
@@ -15,20 +17,21 @@ use confy;
 
 use dirs::home_dir;
 use exitcode;
-use futures::executor::block_on;
-use futures::{future, stream::StreamExt, task::Poll};
+use futures::{executor::block_on, future, stream::StreamExt, task::Poll};
 
 use log::{debug, error, info, trace, warn, SetLoggerError};
 use rand::Rng;
 use tokio::time;
 
-use tibberator::tibber::tui::{self, AppState};
-use tibberator::tibber::{
-    check_user_shutdown, connect_live_measurement, get_home_ids, loop_for_data, AccessConfig,
-    Config, LiveMeasurementSubscription, LoopEndingError,
+use tibberator::{
+    html_logger::{HtmlLogger, LogConfig},
+    tibber::{
+        connect_live_measurement, get_home_ids, loop_for_data, output,
+        output::GuiMode,
+        tui::{self, AppState},
+        AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
+    },
 };
-
-use tibberator::html_logger::{HtmlLogger, LogConfig};
 
 /// Retrieves the configuration settings for the Tibberator application.
 ///
@@ -132,15 +135,18 @@ async fn main() -> ExitCode {
         .expect("Could not create local thread.");
 
     // Start subscription in a separate thread
-    let subscription_handle = std::thread::spawn(move || {
-        local.block_on(async {
+    let subscription_handle =
+        std::thread::spawn(move || {
+            local.block_on(async {
             let config_for_thread = Config {
                 access: access_config,
                 output: output_config,
                 logging: logging_config,
             };
-            let subscription_result =
-                subscription_loop_tui(config_for_thread, app_state_clone).await;
+            let subscription_result = match &config_for_thread.output.gui_mode {
+                GuiMode::Simple => subscription_loop(config_for_thread, app_state_clone).await,
+                GuiMode::Advanced => subscription_loop_tui(config_for_thread, app_state_clone).await
+            };
             match subscription_result {
                 Ok(Some(subscription)) => match subscription.stop().await {
                     Ok(_) => {
@@ -164,14 +170,18 @@ async fn main() -> ExitCode {
                 }
             }
         })
-    });
+        });
 
     // Main event loop
     while !app_state.lock().unwrap().should_quit {
-        // Draw the UI
-        terminal
-            .draw(|f| tui::draw_ui(f, &app_state.lock().unwrap()))
-            .unwrap();
+        if config.output.gui_mode == output::GuiMode::Advanced {
+            // Draw the UI
+            terminal
+                .draw(|f| tui::draw_ui(f, &app_state.lock().unwrap()))
+                .unwrap();
+        } else {
+            sleep(time::Duration::from_secs(1));
+        }
 
         // Handle events
         if let Err(err) = tui::handle_events(&mut app_state.lock().unwrap()) {
@@ -214,7 +224,7 @@ async fn main() -> ExitCode {
 
 fn get_matcher() -> ArgMatches {
     App::new("Tibberator")
-        .version("0.3.0")
+        .version("0.5.0")
         .author("Stephan Z. <https://github.com/babelfischchen>")
         .about(
             "Tibberator connects to the Tibber API and shows basic usage statistics for your home.
@@ -293,34 +303,6 @@ async fn check_home_id(access_config: &AccessConfig) -> bool {
 async fn handle_reconnect(
     access_config: &AccessConfig,
     subscription: Box<LiveMeasurementSubscription>,
-    receiver: &std::sync::mpsc::Receiver<bool>,
-) -> Result<LiveMeasurementSubscription, LoopEndingError> {
-    // Stop the existing subscription
-    subscription.stop().await.map_err(|error| {
-        eprintln!("{:?}", error);
-        std::process::exit(exitcode::PROTOCOL)
-    })?;
-
-    let number_of_seconds = rand::thread_rng().gen_range(1..=60);
-    println!(
-        "\nConnection lost, waiting for {}s before reconnecting.",
-        number_of_seconds
-    );
-
-    // Wait for the specified number of seconds, checking for shutdown
-    for _ in 0..=number_of_seconds {
-        if check_user_shutdown(&receiver) {
-            return Err(LoopEndingError::Shutdown);
-        }
-        std::thread::sleep(time::Duration::from_secs(1));
-    }
-
-    Ok(connect_live_measurement(&access_config).await)
-}
-
-async fn handle_reconnect_tui(
-    access_config: &AccessConfig,
-    subscription: Box<LiveMeasurementSubscription>,
     app_state: Arc<Mutex<AppState>>,
 ) -> Result<LiveMeasurementSubscription, LoopEndingError> {
     // Stop the existing subscription
@@ -346,6 +328,52 @@ async fn handle_reconnect_tui(
     Ok(connect_live_measurement(&access_config).await)
 }
 
+/// Handles the reconnection process for the TUI interface.
+///
+/// This function stops the existing live measurement subscription, waits for a random duration between 1 and 60 seconds,
+/// and then attempts to reconnect. It checks periodically if the application should quit during the waiting period.
+///
+/// # Arguments
+///
+/// * `access_config` - A reference to the access configuration required for reconnection.
+/// * `subscription` - The existing live measurement subscription that needs to be stopped.
+/// * `app_state` - An atomic reference-counted mutex containing the application state, used to check if a shutdown is requested.
+///
+/// # Returns
+///
+/// If successful, returns a new live measurement subscription. Otherwise, returns an error indicating the reason for failure.
+///
+/// # Errors
+///
+/// This function can return errors in the following scenarios:
+/// - If there is an issue stopping the existing subscription.
+/// - If the application state indicates a shutdown request during the waiting period.
+/// - If there is an error establishing a new live measurement connection.
+async fn handle_reconnect_tui(
+    access_config: &AccessConfig,
+    subscription: Box<LiveMeasurementSubscription>,
+    app_state: Arc<Mutex<AppState>>,
+) -> Result<LiveMeasurementSubscription, LoopEndingError> {
+    // Stop the existing subscription
+    subscription.stop().await.map_err(|error| {
+        eprintln!("{:?}", error);
+        std::process::exit(exitcode::PROTOCOL)
+    })?;
+
+    let number_of_seconds = rand::thread_rng().gen_range(1..=60);
+    info!(target: "tibberator.app", "Connection lost, waiting for {}s before reconnecting.", number_of_seconds);
+
+    // Wait for the specified number of seconds, checking for shutdown
+    for _ in 0..=number_of_seconds {
+        if app_state.lock().unwrap().should_quit {
+            return Err(LoopEndingError::Shutdown);
+        }
+        std::thread::sleep(time::Duration::from_secs(1));
+    }
+
+    Ok(connect_live_measurement(&access_config).await)
+}
+
 /// Handles the main subscription loop for receiving live measurement data with TUI updates.
 ///
 /// This asynchronous function takes the following parameters:
@@ -354,7 +382,7 @@ async fn handle_reconnect_tui(
 /// - `app_state`: A shared reference to the application state for updating the UI.
 ///
 /// # Errors
-/// Returns a `Result<Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>, Box<dyn std::error::Error>>`:
+/// Returns a `Result<Option<Box<Subscription<StreamingOperation<LiveMeasurement>>>>, Box<dyn std::error::Error + Send + Sync>>`:
 /// - `Ok(Some(subscription))`: Successfully processed data, returning the updated subscription.
 /// - `Ok(None)`: User initiated shutdown during reconnection.
 /// - `Err(error)`: An error occurred during data processing or reconnection.
@@ -373,16 +401,7 @@ async fn subscription_loop_tui(
     }
 
     // Fetch initial price info
-    match tibberator::tibber::update_current_energy_price_info(&config.access, None).await {
-        Ok(price_info) => {
-            // Update app state with price info
-            let mut state = app_state.lock().unwrap();
-            state.price_info = Some(price_info);
-        }
-        Err(err) => {
-            error!(target: "tibberator.mainloop", "Failed to fetch price info: {:?}", err);
-        }
-    }
+    update_current_energy_price(&config.access, app_state.lock().unwrap().deref_mut()).await?;
 
     // Fetch display data based on display mode
     {
@@ -431,6 +450,7 @@ async fn subscription_loop_tui(
         {
             let cloned_app_state = app_state.clone();
             let mut state = cloned_app_state.lock().unwrap();
+            update_current_energy_price(&config.access, state.deref_mut()).await?;
 
             if state.data_needs_refresh {
                 match tibberator::tibber::fetch_display_data(&config.access, &state.display_mode)
@@ -515,7 +535,73 @@ async fn subscription_loop_tui(
     Ok(Some(subscription))
 }
 
-/// Process data from a subscription and call appropriate handlers
+/// Updates the current energy price information in the application state.
+///
+/// This asynchronous function fetches the latest energy price information from Tibber using the provided access configuration.
+/// If the fetched price information is different from the currently stored one, it marks the data as needing refresh and updates the stored price information.
+///
+/// # Arguments
+/// * `access_config` - A reference to the AccessConfig containing the necessary credentials and settings to access Tibber's API.
+/// * `app_state` - A mutable reference to the AppState where the fetched price information will be stored or updated.
+///
+/// # Returns
+/// * `Ok(())` - If the price information is successfully fetched and updated (or no update was needed).
+/// * `Err(Box<LoopEndingError::InvalidData>)` - If there was an error fetching the price information, logging the error and returning an invalid data error.
+///
+/// # Errors
+/// This function will return an error if:
+/// * The API request to fetch the price information fails.
+async fn update_current_energy_price(
+    access_config: &AccessConfig,
+    app_state: &mut AppState,
+) -> Result<(), Box<LoopEndingError>> {
+    match tibberator::tibber::update_current_energy_price_info(
+        &access_config,
+        app_state.price_info.clone(),
+    )
+    .await
+    {
+        Ok(price_info) => {
+            if app_state
+                .price_info
+                .as_ref()
+                .map_or(true, |current| current != &price_info)
+            {
+                app_state.data_needs_refresh = true;
+                app_state.price_info = Some(price_info);
+            }
+            Ok(())
+        }
+        Err(err) => {
+            error!(target: "tibberator.mainloop", "Failed to fetch price info: {:?}", err);
+            Err(Box::new(LoopEndingError::InvalidData))
+        }
+    }
+}
+
+/// Process data from a subscription and call appropriate handlers.
+///
+/// This function asynchronously processes incoming data from a `LiveMeasurementSubscription`.
+/// It uses the provided `data_handler` to handle valid power measurements, `error_handler`
+/// for invalid data scenarios, and `reconnect_handler` for reconnection attempts. The function
+/// also checks for user shutdown requests or reconnect timeouts to manage the loop's termination.
+///
+/// # Parameters:
+/// - `config`: A reference to the configuration settings which include access timeout values.
+/// - `app_state`: An arc-wrapped mutex containing the application state, used to check if a shutdown is requested.
+/// - `subscription`: A mutable reference to the live measurement subscription from which data is received.
+/// - `data_handler`: A function that takes a `LiveMeasurementLiveMeasurement` and processes it.
+/// - `error_handler`: A function that takes an error message as a string and handles errors.
+/// - `reconnect_handler`: A function that handles the reconnection logic when necessary.
+///
+/// # Returns:
+/// This function returns a `Result` indicating success or an error. The error can be one of several
+/// types encapsulated in a `Box<LoopEndingError>`, including `Shutdown`, `Reconnect`, or `InvalidData`.
+///
+/// # Errors:
+/// - `LoopEndingError::Shutdown`: If the user requests shutdown through the application state.
+/// - `LoopEndingError::Reconnect`: If a reconnect timeout occurs or is manually triggered.
+/// - `LoopEndingError::InvalidData`: If the received data is invalid.
 async fn process_subscription_data<F, E, R>(
     config: &Config,
     app_state: Arc<Mutex<AppState>>,
@@ -600,21 +686,21 @@ where
 /// Original subscription loop function, kept for compatibility with tests
 async fn subscription_loop(
     config: Config,
-    receiver: std::sync::mpsc::Receiver<bool>,
-) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error>> {
+    app_state: Arc<Mutex<AppState>>,
+) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error + Send + Sync>> {
     let mut subscription = Box::new(connect_live_measurement(&config.access).await);
 
     write!(stdout(), "Waiting for data ...").unwrap();
     stdout().flush().unwrap();
 
     loop {
-        let final_result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+        let final_result = loop_for_data(&config, subscription.as_mut(), app_state.clone()).await;
         match final_result {
             Ok(()) => break,
             Err(error) => match error.downcast_ref::<LoopEndingError>() {
                 Some(LoopEndingError::Reconnect) | Some(LoopEndingError::ConnectionTimeout) => {
                     let subscription_result =
-                        handle_reconnect(&config.access, subscription, &receiver).await;
+                        handle_reconnect(&config.access, subscription, app_state.clone()).await;
 
                     match subscription_result {
                         Ok(res) => subscription = Box::new(res),
@@ -623,19 +709,19 @@ async fn subscription_loop(
                         }
                         Err(error) => {
                             eprintln!("Unexpected error: {:?}", error);
-                            return Err(Box::new(error) as Box<dyn std::error::Error>);
+                            return Err(Box::new(error) as Box<dyn std::error::Error + Send + Sync>);
                         }
                     }
                 }
                 Some(LoopEndingError::InvalidData) => {
-                    return Err(Box::new(LoopEndingError::InvalidData) as Box<dyn std::error::Error>)
+                    return Err(Box::new(LoopEndingError::InvalidData)
+                        as Box<dyn std::error::Error + Send + Sync>)
                 }
                 _ => {
                     eprintln!("Unexpected error: {:?}", error);
-                    return Err(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "Invalid data",
-                    )) as Box<dyn std::error::Error>);
+                    return Err(Box::<dyn std::error::Error + Send + Sync>::from(
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid data"),
+                    ));
                 }
             },
         }
@@ -647,7 +733,8 @@ async fn subscription_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{env, sync::mpsc::channel};
+    use std::env;
+    use tibberator::tibber::output::DisplayMode;
     use tokio::time::sleep;
 
     fn get_test_config() -> Config {
@@ -657,15 +744,27 @@ mod tests {
         confy::load_path(path).expect("Config file not found.")
     }
 
+    fn create_app_state() -> Arc<Mutex<AppState>> {
+        Arc::new(Mutex::new(AppState {
+            should_quit: false,
+            measurement: None,
+            price_info: None,
+            bar_graph_data: None,
+            display_mode: DisplayMode::Prices,
+            status: String::from("Waiting for data..."),
+            data_needs_refresh: false,
+        }))
+    }
+
     #[tokio::test]
     async fn test_subscription_loop() {
-        let mut config = get_test_config();
-        // Ensure display_mode is set for the test
-        config.output.display_mode = tibberator::tibber::output::DisplayMode::Prices;
-        let (sender, receiver) = channel();
-        let subscription = subscription_loop(config, receiver);
+        let config = get_test_config();
+
+        let app_state = create_app_state();
+
+        let subscription = subscription_loop(config, app_state.clone());
         sleep(time::Duration::from_secs(5)).await;
-        sender.send(true).unwrap();
+        app_state.lock().unwrap().should_quit = true;
         let subscription = subscription.await;
         assert!(subscription.as_ref().is_ok());
         let result = subscription.unwrap();

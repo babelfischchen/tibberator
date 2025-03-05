@@ -10,10 +10,10 @@ mod lib_tests {
     use crate::mock_subscription::{self, SubscriptionServer};
     use graphql_ws_client::Client;
     use http::HeaderValue;
-    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex};
     use tibberator::tibber::{
-        live_measurement, loop_for_data, Config, LiveMeasurementOperation,
-        LiveMeasurementSubscription,
+        live_measurement, loop_for_data, output::DisplayMode, tui::AppState, Config,
+        LiveMeasurementOperation, LiveMeasurementSubscription,
     };
     use tokio::time::sleep;
 
@@ -102,7 +102,16 @@ mod lib_tests {
         let mut stream = start_subscribtion(&server).await.unwrap();
         sleep(Duration::from_millis(100)).await;
 
-        let (sender, receiver) = mpsc::channel();
+        let app_state = Arc::new(Mutex::new(AppState {
+            should_quit: false,
+            measurement: None,
+            price_info: None,
+            bar_graph_data: None,
+            display_mode: DisplayMode::Prices,
+            status: String::from("Waiting for data..."),
+            data_needs_refresh: false,
+        }));
+
         let config = get_test_config();
         assert!(config.output.is_silent());
 
@@ -115,10 +124,10 @@ mod lib_tests {
                     sleep(Duration::from_secs(3)).await;
                 }
                 sleep(Duration::from_secs(1)).await;
-                sender.send(true).unwrap();
+                app_state.lock().unwrap().should_quit = true;
             },
             async {
-                let result = loop_for_data(&config, &mut stream, &receiver).await;
+                let result = loop_for_data(&config, &mut stream, app_state.clone()).await;
                 assert!(result.is_ok());
             }
         );
