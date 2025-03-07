@@ -228,6 +228,18 @@ pub mod tibber {
                     }
                 }
             }
+            output::DisplayMode::Cost => {
+                match get_todays_energy_consumption(&access_config).await {
+                    Ok(consumption) => Ok(Some((
+                        consumption.into_iter().map(|c| c.cost).collect(),
+                        "Cost [€]",
+                    ))),
+                    Err(error) => {
+                        warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
+                        Ok(None)
+                    }
+                }
+            }
         }
     }
 

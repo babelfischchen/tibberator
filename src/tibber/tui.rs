@@ -1,7 +1,7 @@
 use std::io;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -15,6 +15,7 @@ use crate::tibber::output::DisplayMode;
 use crate::tibber::{live_measurement, PriceInfo};
 
 /// Represents the application state
+#[derive(Debug)]
 pub struct AppState {
     /// Whether the application should exit
     pub should_quit: bool,
@@ -44,6 +45,13 @@ impl Default for AppState {
             data_needs_refresh: false,
         }
     }
+}
+
+enum TimeInterval {
+    Hourly,
+    Last30Days,
+    Last12Months,
+    Years,
 }
 
 /// Initialize the terminal for TUI rendering
@@ -76,7 +84,8 @@ pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
                     KeyCode::Char('d') => {
                         app_state.display_mode = match app_state.display_mode {
                             DisplayMode::Prices => DisplayMode::Consumption,
-                            DisplayMode::Consumption => DisplayMode::Prices,
+                            DisplayMode::Consumption => DisplayMode::Cost,
+                            DisplayMode::Cost => DisplayMode::Prices,
                         };
                         app_state.data_needs_refresh = true;
                     }
@@ -277,59 +286,102 @@ fn draw_main_content(frame: &mut Frame, app_state: &AppState, area: Rect) {
     frame.render_widget(price_paragraph, main_chunks[1]);
 }
 
+fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
+    let right_now = Local::now();
+    let current_hour = right_now.hour() as usize;
+    let current_date = right_now.naive_local();
+
+    let min_value = data.iter().cloned().fold(f64::INFINITY, f64::min);
+    let max_value = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+    let (effective_min, effective_max) = if min_value == max_value {
+        (min_value - 0.5, max_value + 0.5)
+    } else {
+        (min_value, max_value)
+    };
+
+    let bar_style = Style::default().fg(Color::from_u32(0x0023B8CC));
+    let highlight_style = Style::default().fg(Color::from_u32(0xF55249));
+
+    data.iter()
+        .enumerate()
+        .map(|(index, &value)| {
+            let scaled_value = (((value - effective_min) / (effective_max - effective_min) * 90.0)
+                + 10.0)
+                .clamp(10.0, 100.0);
+
+            let label_text = match interval {
+                TimeInterval::Hourly => format!("{:02}", index),
+                TimeInterval::Last30Days => {
+                    let date = current_date - chrono::Duration::days(29 - index as i64);
+                    date.format("%d").to_string()
+                }
+                TimeInterval::Last12Months => {
+                    // For Last12Months: index 0 = 11 months ago, index 11 = current month
+                    let months_ago = 11 - index as i32;
+
+                    // Calculate the date by going back months_ago months
+                    let mut month = current_date.month() as i32 - months_ago;
+
+                    // Adjust month if we went to previous year
+                    while month <= 0 {
+                        month += 12;
+                    }
+
+                    // Format only the month number
+                    format!("{:02}", month)
+                }
+                TimeInterval::Years => {
+                    let year = current_date.year() - index as i32;
+                    format!("{}", year)
+                }
+            };
+
+            let is_highlighted = match interval {
+                TimeInterval::Hourly => index == current_hour,
+                TimeInterval::Last30Days => index == 29, // Highlight the current day, which is likely the last in the array
+                TimeInterval::Last12Months => index == 11, // Highlight the current month
+                TimeInterval::Years => index == data.len() - 1, // Highlight the current year
+            };
+
+            let value_style = if is_highlighted {
+                highlight_style
+            } else {
+                bar_style
+            };
+            let bar_color = value_style.fg.unwrap_or(Color::Blue);
+
+            let label_style = if is_highlighted {
+                highlight_style
+            } else {
+                Style::default()
+            };
+
+            Bar::default()
+                .value(scaled_value as u64)
+                .label(Line::from(Span::styled(label_text, label_style)))
+                .text_value(format!("{:.2}", value))
+                .style(value_style)
+                .value_style(Style::default().fg(Color::White).bg(bar_color))
+        })
+        .collect()
+}
+
+fn get_time_interval(app_state: &AppState) -> TimeInterval {
+    match app_state.display_mode {
+        DisplayMode::Prices => TimeInterval::Hourly,
+        DisplayMode::Consumption => TimeInterval::Hourly,
+        DisplayMode::Cost => TimeInterval::Hourly,
+    }
+}
+
 /// Draw the bar graph section
 fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
     if let Some((data, label)) = &app_state.bar_graph_data {
-        let current_hour = Local::now().hour() as usize;
-
-        // Find min and max values for scaling
-        let min_value = data.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_value = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-
-        // Handle the case where all values are the same
-        let (effective_min, effective_max) = if min_value == max_value {
-            (min_value - 0.5, max_value + 0.5)
-        } else {
-            (min_value, max_value)
-        };
-
         let bar_block = Block::default().title(label.clone()).borders(Borders::ALL);
 
-        // Set default bar style
-        let bar_style = Style::default().fg(Color::from_u32(0x0023B8CC));
-        let highlight_style = Style::default().fg(Color::from_u32(0xF55249));
-
         // Create bar data in format (&str, u64)
-        let bar_data: Vec<Bar> = data
-            .iter()
-            .enumerate()
-            .map(|(hour, &value)| {
-                // Normalize value to 0-100 range for bar height
-                let scaled_value =
-                    (((value - effective_min) / (effective_max - effective_min) * 90.0) + 10.0)
-                        .clamp(10.0, 100.0);
-
-                let value_style = if hour == current_hour {
-                    highlight_style
-                } else {
-                    bar_style
-                };
-                let bar_color = value_style.fg.unwrap_or(Color::Blue);
-
-                let hour_style = if hour == current_hour {
-                    highlight_style
-                } else {
-                    Style::default()
-                };
-
-                Bar::default()
-                    .value(scaled_value as u64)
-                    .label(Line::from(Span::styled(format!("{hour:02}"), hour_style)))
-                    .text_value(format!("{value:.2}"))
-                    .style(value_style)
-                    .value_style(Style::default().fg(Color::White).bg(bar_color))
-            })
-            .collect();
+        let bar_data: Vec<Bar> = create_bar_data(data, get_time_interval(app_state));
         let chart = BarChart::default()
             .block(bar_block)
             .bar_width(4)

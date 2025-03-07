@@ -38,6 +38,7 @@ pub enum TaxStyle {
 pub enum DisplayMode {
     Prices,
     Consumption,
+    Cost,
 }
 
 /// `GuiMode` is an enum that represents the different modes of the GUI. It can be one of the following: `Simple` or `Advanced`.

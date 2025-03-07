@@ -71,6 +71,14 @@ struct PriceHourly;
 )]
 struct ConsumptionHourly;
 
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "tibber/schema.json",
+    query_path = "tibber/consumption_hourly_page_info.graphql",
+    response_derives = "Debug"
+)]
+struct ConsumptionHourlyPageInfo;
+
 /// Trait to define the common fields required for parsing price info.
 trait PriceInfoFields {
     fn total(&self) -> Option<f64>;
@@ -250,6 +258,7 @@ impl PriceInfo {
         Some(price_infos)
     }
 }
+
 impl PriceLevel {
     /// Converts a `PriceLevel` variant to a corresponding text color using crossterm.
     ///
@@ -271,6 +280,38 @@ impl PriceLevel {
             PriceLevel::VeryExpensive => Some(style::Color::DarkRed),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConsumptionPage {
+    pub start_cursor: String,
+    pub has_previous_page: bool,
+    pub count: usize,
+    pub total_cost: f64,
+    pub total_consumption: f64,
+    pub currency: String,
+}
+
+impl ConsumptionPage {
+    pub fn create_from(
+        consumption_page: &consumption_hourly_page_info::ConsumptionHourlyPageInfoViewerHomeConsumptionPageInfo,
+    ) -> Option<ConsumptionPage> {
+        let start_cursor = String::from(consumption_page.start_cursor.clone()?);
+        let has_previous_page = consumption_page.has_previous_page?;
+        let count = consumption_page.count? as usize;
+        let total_cost = consumption_page.total_cost?;
+        let total_consumption = consumption_page.total_consumption?;
+        let currency = String::from(consumption_page.currency.clone()?);
+
+        Some(ConsumptionPage {
+            start_cursor,
+            has_previous_page,
+            count,
+            total_cost,
+            total_consumption,
+            currency,
+        })
     }
 }
 
@@ -837,6 +878,37 @@ pub async fn update_current_energy_price_info(
     }
 }
 
+pub async fn get_consumption_page(
+    config: &AccessConfig,
+    cursor: &String,
+) -> Result<ConsumptionPage, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.consumption", "Fetching consumption page: {:?}", cursor);
+
+    let id = config.home_id.to_owned();
+    let variables = consumption_hourly_page_info::Variables {
+        id,
+        cursor: Some(cursor.to_owned()),
+    };
+    let consumption_page_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<ConsumptionHourlyPageInfo>(config, variables),
+    )
+    .await?;
+
+    let consumption_page = consumption_page_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .consumption
+        .ok_or(LoopEndingError::InvalidData)?
+        .page_info;
+
+    info!(target: "tibberator.consumption", "Received consumption page");
+
+    ConsumptionPage::create_from(&consumption_page).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
 pub type LiveMeasurementOperation = StreamingOperation<LiveMeasurement>;
 pub type LiveMeasurementSubscription = Subscription<LiveMeasurementOperation>;
 
@@ -1098,4 +1170,21 @@ mod tests {
             }
         }
     }
+
+        #[tokio::test]
+    async fn test_get_consumption_page() {
+        let config = AccessConfig::default();
+
+        let result = get_consumption_page(&config, &String::from("")).await;
+        assert!(result.is_ok());
+
+        let consumption_page = result.unwrap();
+        assert_eq!(consumption_page.count, 1, "Should have 1 page entries");
+        assert_ne!(consumption_page.currency, "");
+        assert!(consumption_page.has_previous_page);
+        assert_ne!(consumption_page.start_cursor, "");
+        assert!(consumption_page.total_consumption > 0.0);
+        assert!(consumption_page.total_cost > 0.0);
+    }
+
 }
