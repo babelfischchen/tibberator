@@ -121,7 +121,7 @@ pub fn print_screen(
     tax_style: &TaxStyle,
     data: live_measurement::LiveMeasurementLiveMeasurement,
     price_info: &PriceInfo,
-    bar_graph_data: &Option<(Vec<f64>, &str)>,
+    bar_graph_data: &Option<(Vec<f64>, String)>,
 ) {
     let tax_string = match tax_style {
         TaxStyle::Price => {

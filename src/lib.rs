@@ -3,6 +3,7 @@
 //! This module contains various helper methods to connect to the Tibber API (see https://developer.tibber.com).
 //! You need an access token in order to use the API.
 pub mod tibber {
+    use chrono::{Local, Timelike};
     use futures::{future, stream::StreamExt, task::Poll};
     use log::{debug, error, info, warn};
     use serde::{Deserialize, Serialize};
@@ -15,10 +16,10 @@ pub mod tibber {
     };
 
     pub use data_handling::{
-        connect_live_measurement, fetch_home_data, get_home_ids, get_todays_energy_consumption,
-        get_todays_energy_prices, live_measurement, update_current_energy_price_info, AccessConfig,
-        ConsumptionNode, LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError,
-        PriceInfo,
+        connect_live_measurement, estimate_daily_fees, fetch_home_data, get_home_ids,
+        get_last_consumption_pages, get_todays_energy_consumption, get_todays_energy_prices,
+        live_measurement, update_current_energy_price_info, AccessConfig, ConsumptionNode,
+        LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError, PriceInfo,
     };
     use output::{print_screen, DisplayMode, OutputConfig};
     use tui::AppState;
@@ -150,7 +151,8 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         // Fetch data based on display mode configuration
-        let display_data = fetch_display_data(&config.access, &config.output.display_mode).await?;
+        let display_data =
+            fetch_display_data(&config.access, &config.output.display_mode, &None).await?;
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -204,12 +206,13 @@ pub mod tibber {
     pub async fn fetch_display_data(
         access_config: &AccessConfig,
         display_mode: &DisplayMode,
-    ) -> Result<Option<(Vec<f64>, &'static str)>, Box<dyn std::error::Error>> {
+        estimated_daily_fee: &Option<f64>,
+    ) -> Result<Option<(Vec<f64>, String)>, Box<dyn std::error::Error>> {
         match display_mode {
             output::DisplayMode::Prices => match get_todays_energy_prices(access_config).await {
                 Ok(prices) => Ok(Some((
                     prices.into_iter().map(|p| p.total).collect(),
-                    "Energy Prices [EUR/kWh]",
+                    String::from("Energy Prices [EUR/kWh]"),
                 ))),
                 Err(error) => {
                     warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
@@ -220,7 +223,7 @@ pub mod tibber {
                 match get_todays_energy_consumption(&access_config).await {
                     Ok(consumption) => Ok(Some((
                         consumption.into_iter().map(|c| c.consumption).collect(),
-                        "Energy Consumption [kWh]",
+                        String::from("Energy Consumption [kWh]"),
                     ))),
                     Err(error) => {
                         warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
@@ -229,16 +232,30 @@ pub mod tibber {
                 }
             }
             output::DisplayMode::Cost => {
-                match get_todays_energy_consumption(&access_config).await {
-                    Ok(consumption) => Ok(Some((
-                        consumption.into_iter().map(|c| c.cost).collect(),
-                        "Cost [€]",
-                    ))),
+                let current_hour = Local::now().hour() as usize;
+                let mut pages_so_far = match get_last_consumption_pages(access_config, current_hour)
+                    .await
+                {
+                    Ok(consumption_pages) => consumption_pages
+                        .into_iter()
+                        .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
+                        .collect(),
                     Err(error) => {
                         warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
-                        Ok(None)
+                        Vec::new()
                     }
+                };
+
+                if pages_so_far.is_empty() {
+                    return Ok(None);
                 }
+
+                let description_string = String::from("Cost [EUR]");
+                for _i in 0..(24 - current_hour) {
+                    pages_so_far.push(0.0);
+                }
+
+                Ok(Some((pages_so_far, description_string)))
             }
         }
     }
@@ -257,6 +274,7 @@ pub mod tibber {
                 should_quit: false,
                 measurement: None,
                 price_info: None,
+                estimated_daily_fees: None,
                 bar_graph_data: None,
                 display_mode: DisplayMode::Prices,
                 status: String::from("Waiting for data..."),
@@ -384,7 +402,7 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config.access, &config.output.display_mode).await;
+            let result = fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
@@ -402,7 +420,7 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config.access, &config.output.display_mode).await;
+            let result = fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());

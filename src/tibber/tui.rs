@@ -23,6 +23,8 @@ pub struct AppState {
     pub measurement: Option<live_measurement::LiveMeasurementLiveMeasurement>,
     /// Current price information
     pub price_info: Option<PriceInfo>,
+    /// Estimated daily fees
+    pub estimated_daily_fees: Option<f64>,
     /// Bar graph data (values and label)
     pub bar_graph_data: Option<(Vec<f64>, String)>,
     /// Display mode (prices or consumption)
@@ -39,6 +41,7 @@ impl Default for AppState {
             should_quit: false,
             measurement: None,
             price_info: None,
+            estimated_daily_fees: None,
             bar_graph_data: None,
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),
@@ -273,7 +276,11 @@ fn draw_main_content(frame: &mut Frame, app_state: &AppState, area: Rect) {
             if let Some(cost) = measurement.accumulated_cost {
                 if let Some(currency) = &measurement.currency {
                     price_text.push(Line::from(""));
-                    price_text.push(Line::from(format!("Cost today: {:.2} {}", cost, currency)));
+                    price_text.push(Line::from(format!(
+                        "Cost today: {:.2} {}",
+                        cost + app_state.estimated_daily_fees.unwrap_or(0.0),
+                        currency
+                    )));
                 }
             }
         }

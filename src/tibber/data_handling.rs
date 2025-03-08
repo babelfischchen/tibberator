@@ -4,7 +4,7 @@ use async_tungstenite::{
     tungstenite::handshake::client::{generate_key, Response},
     WebSocketStream,
 };
-use chrono::{DateTime, Duration, FixedOffset, Local, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, TimeZone, Utc};
 use crossterm::style;
 use graphql_client::{reqwest::post_graphql, GraphQLQuery};
 use graphql_ws_client::{graphql::StreamingOperation, Client as WSClient, Subscription};
@@ -78,6 +78,14 @@ struct ConsumptionHourly;
     response_derives = "Debug"
 )]
 struct ConsumptionHourlyPageInfo;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "tibber/schema.json",
+    query_path = "tibber/fee_estimation.graphql",
+    response_derives = "Debug"
+)]
+struct FeeEstimation;
 
 /// Trait to define the common fields required for parsing price info.
 trait PriceInfoFields {
@@ -878,7 +886,7 @@ pub async fn update_current_energy_price_info(
     }
 }
 
-pub async fn get_consumption_page(
+async fn get_consumption_page(
     config: &AccessConfig,
     cursor: &String,
 ) -> Result<ConsumptionPage, Box<dyn std::error::Error>> {
@@ -907,6 +915,95 @@ pub async fn get_consumption_page(
     info!(target: "tibberator.consumption", "Received consumption page");
 
     ConsumptionPage::create_from(&consumption_page).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+/// Estimates the daily fees based on the provided configuration.
+///
+/// Returns:
+///   - Ok(Some(fee)): Successfully calculated daily fee
+///   - Ok(None): No data available to calculate fees
+///   - Err: An error occurred during calculation
+pub async fn get_last_consumption_pages(
+    config: &AccessConfig,
+    n: usize,
+) -> Result<Vec<ConsumptionPage>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.consumption", "Retrieving last {} consumption pages", n);
+
+    let mut page = get_consumption_page(&config, &String::from("")).await?;
+
+    let mut pages = Vec::new();
+
+    for _i in 0..n {
+        let start_cursor = page.start_cursor.clone();
+        pages.push(page);
+
+        page = get_consumption_page(&config, &start_cursor).await?;
+    }
+
+    info!(target: "tibberator.consumption", "Received {} consumption pages", n);
+
+    pages.reverse();
+    Ok(pages)
+}
+
+pub async fn estimate_daily_fees(
+    config: &AccessConfig,
+) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.price", "Estimating daily fees");
+    let id = config.home_id.to_owned();
+    let variables = fee_estimation::Variables { id };
+
+    let fee_estimation_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<FeeEstimation>(config, variables),
+    )
+    .await?;
+
+    let fee_estimation_data = fee_estimation_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .consumption
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    let price_nodes = fee_estimation_data
+        .nodes
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    if price_nodes.is_empty() {
+        info!(target: "tibberator.price", "No price data available");
+        return Ok(None);
+    }
+
+    if price_nodes.len() != 1 {
+        warn!(target: "tibberator.price", "Expect 1 price node to be found, found {}", price_nodes.len());
+        return Err(Box::new(LoopEndingError::InvalidData));
+    }
+
+    let price_first_node = price_nodes[0]
+        .as_ref()
+        .ok_or(LoopEndingError::InvalidData)?;
+    let price_excluding_fees = price_first_node.cost.ok_or(LoopEndingError::InvalidData)?;
+
+    let now = Local::now();
+    let days_last_month = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .unwrap()
+        .pred_opt()
+        .unwrap()
+        .day() as f64;
+
+    match fee_estimation_data.page_info.total_cost {
+        Some(cost) => {
+            let daily_fee = (cost - price_excluding_fees) / days_last_month as f64;
+            info!(target: "tibberator.price", "Estimated daily fee: {} {}", cost, fee_estimation_data.page_info.currency.unwrap_or_default());
+            Ok(Some(daily_fee))
+        }
+        None => {
+            info!(target: "tibberator.price", "Error calculating daily fee: Total cost not provided");
+            Ok(None)
+        }
+    }
 }
 
 pub type LiveMeasurementOperation = StreamingOperation<LiveMeasurement>;
@@ -1171,7 +1268,7 @@ mod tests {
         }
     }
 
-        #[tokio::test]
+    #[tokio::test]
     async fn test_get_consumption_page() {
         let config = AccessConfig::default();
 
@@ -1187,4 +1284,51 @@ mod tests {
         assert!(consumption_page.total_cost > 0.0);
     }
 
+    #[tokio::test]
+    async fn test_get_last_10_hours_consumption() {
+        use std::collections::HashSet;
+
+        let config = AccessConfig::default();
+        let mut result = get_consumption_page(&config, &String::from("")).await;
+        assert!(result.is_ok());
+
+        let mut pages = Vec::new();
+
+        for _i in 0..10 {
+            let consumption = result.unwrap();
+            assert_eq!(consumption.count, 1, "Should have 1 page entries");
+            assert!(consumption.has_previous_page);
+            assert_ne!(consumption.start_cursor, "", "Cursor must be valid");
+            result = get_consumption_page(&config, &consumption.start_cursor).await;
+
+            pages.push(consumption);
+        }
+
+        assert_eq!(pages.len(), 10, "There should be 10 pages");
+
+        // check that all 10 pages are unique
+        let mut seen_consumptions = HashSet::new();
+        for consumption in &pages {
+            let cursor = &consumption.start_cursor;
+            if !seen_consumptions.insert(cursor) {
+                panic!("Duplicate consumption found: {:?}", consumption);
+            }
+        }
+        assert!(
+            seen_consumptions.len() == pages.len(),
+            "All pages should be unique"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_estimate_daily_fee() {
+        let config = AccessConfig::default();
+        let estimated_fee = estimate_daily_fees(&config).await;
+        assert!(estimated_fee.is_ok());
+
+        let estimated_fee = estimated_fee.unwrap();
+        assert!(estimated_fee.is_some());
+
+        assert!(estimated_fee.unwrap() >= 0.0);
+    }
 }

@@ -106,6 +106,7 @@ mod lib_tests {
             should_quit: false,
             measurement: None,
             price_info: None,
+            estimated_daily_fees: None,
             bar_graph_data: None,
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),

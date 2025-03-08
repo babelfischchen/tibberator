@@ -26,7 +26,7 @@ use tokio::time;
 use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
-        connect_live_measurement, get_home_ids, loop_for_data, output,
+        connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data, output,
         output::GuiMode,
         tui::{self, AppState},
         AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
@@ -120,6 +120,7 @@ async fn main() -> ExitCode {
         should_quit: false,
         measurement: None,
         price_info: None,
+        estimated_daily_fees: None,
         bar_graph_data: None,
         display_mode: config.output.display_mode,
         status: String::from("Waiting for data..."),
@@ -403,10 +404,28 @@ async fn subscription_loop_tui(
     // Fetch initial price info
     update_current_energy_price(&config.access, app_state.lock().unwrap().deref_mut()).await?;
 
+    // fetch an estimate for the daily fee
+    let estimated_daily_fee_result = estimate_daily_fees(&config.access).await;
+    app_state.lock().unwrap().estimated_daily_fees = match estimated_daily_fee_result {
+        Ok(estimated_daily_fee) => estimated_daily_fee,
+        Err(err) => {
+            error!(target: "tibberator.mainloop", "Failed to fetch daily fee estimate: {:?}", err);
+            return Err(Box::<dyn std::error::Error + Send + Sync>::from(
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid Data"),
+            ));
+        }
+    };
+
     // Fetch display data based on display mode
     {
         let mut state = app_state.lock().unwrap();
-        match tibberator::tibber::fetch_display_data(&config.access, &state.display_mode).await {
+        match tibberator::tibber::fetch_display_data(
+            &config.access,
+            &state.display_mode,
+            &state.estimated_daily_fees,
+        )
+        .await
+        {
             Ok(Some((data, label))) => {
                 // Update app state with bar graph data
                 state.bar_graph_data = Some((data, label.to_string()));
@@ -419,6 +438,7 @@ async fn subscription_loop_tui(
             }
         }
     }
+
     // Create a custom data handler that updates the app state
     let data_handler =
         |data: tibberator::tibber::live_measurement::LiveMeasurementLiveMeasurement| {
@@ -453,8 +473,12 @@ async fn subscription_loop_tui(
             update_current_energy_price(&config.access, state.deref_mut()).await?;
 
             if state.data_needs_refresh {
-                match tibberator::tibber::fetch_display_data(&config.access, &state.display_mode)
-                    .await
+                match tibberator::tibber::fetch_display_data(
+                    &config.access,
+                    &state.display_mode,
+                    &state.estimated_daily_fees,
+                )
+                .await
                 {
                     Ok(Some((data, label))) => {
                         state.bar_graph_data = Some((data, label.to_string()));
@@ -750,6 +774,7 @@ mod tests {
             measurement: None,
             price_info: None,
             bar_graph_data: None,
+            estimated_daily_fees: None,
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),
             data_needs_refresh: false,
