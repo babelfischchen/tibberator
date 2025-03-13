@@ -27,7 +27,10 @@ use tokio::time;
 use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
-        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data, output::{self, GuiMode}, tui::{self, AppState}, AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError
+        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data,
+        output::{self, GuiMode},
+        tui::{self, AppState},
+        AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
     },
 };
 
@@ -329,7 +332,7 @@ async fn handle_reconnect(
 
 /// Handles the reconnection process for the TUI interface.
 ///
-/// This function stops the existing live measurement subscription, waits for a random duration between 1 and 60 seconds,
+/// This function stops the existing live measurement subscription, waits for a random duration between 10 and 120 seconds,
 /// and then attempts to reconnect. It checks periodically if the application should quit during the waiting period.
 ///
 /// # Arguments
@@ -359,7 +362,11 @@ async fn handle_reconnect_tui(
         std::process::exit(exitcode::PROTOCOL)
     })?;
 
-    let number_of_seconds = rand::thread_rng().gen_range(1..=60);
+    let base_delay = 10; // Base delay in seconds
+    let max_jitter = 110; // Maximum jitter in seconds
+
+    let jitter = rand::thread_rng().gen_range(0..=max_jitter);
+    let number_of_seconds = base_delay + jitter;
     info!(target: "tibberator.app", "Connection lost, waiting for {}s before reconnecting.", number_of_seconds);
 
     // Wait for the specified number of seconds, checking for shutdown

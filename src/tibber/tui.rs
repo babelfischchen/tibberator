@@ -84,11 +84,7 @@ pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
                         app_state.should_quit = true;
                     }
                     KeyCode::Char('d') => {
-                        app_state.display_mode = match app_state.display_mode {
-                            DisplayMode::Prices => DisplayMode::Consumption,
-                            DisplayMode::Consumption => DisplayMode::Cost,
-                            DisplayMode::Cost => DisplayMode::Prices,
-                        };
+                        app_state.display_mode = app_state.display_mode.next();
 
                         // Check if the cache for the current display mode is expired
                         let cache_expired = cache_expired(&app_state);
