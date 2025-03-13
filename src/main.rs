@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    collections::HashMap,
     fs::{create_dir_all, File},
     io::{stdin, stdout, Read, Write},
     ops::DerefMut,
@@ -26,10 +27,7 @@ use tokio::time;
 use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
-        connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data, output,
-        output::GuiMode,
-        tui::{self, AppState},
-        AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
+        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data, output::{self, GuiMode}, tui::{self, AppState}, AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError
     },
 };
 
@@ -121,7 +119,7 @@ async fn main() -> ExitCode {
         measurement: None,
         price_info: None,
         estimated_daily_fees: None,
-        bar_graph_data: None,
+        cached_bar_graph: HashMap::new(),
         display_mode: config.output.display_mode,
         status: String::from("Waiting for data..."),
         data_needs_refresh: false,
@@ -419,16 +417,20 @@ async fn subscription_loop_tui(
     // Fetch display data based on display mode
     {
         let mut state = app_state.lock().unwrap();
+        let current_display_mode = state.display_mode.to_owned();
+
         match tibberator::tibber::fetch_display_data(
             &config.access,
-            &state.display_mode,
+            &current_display_mode,
             &state.estimated_daily_fees,
         )
         .await
         {
-            Ok(Some((data, label))) => {
+            Ok(Some((data, label, data_time))) => {
                 // Update app state with bar graph data
-                state.bar_graph_data = Some((data, label.to_string()));
+                state
+                    .cached_bar_graph
+                    .insert(current_display_mode, (data, label.to_string(), data_time));
             }
             Ok(None) => {
                 info!(target: "tibberator.mainloop", "No display data available");
@@ -472,7 +474,10 @@ async fn subscription_loop_tui(
             let mut state = cloned_app_state.lock().unwrap();
             update_current_energy_price(&config.access, state.deref_mut()).await?;
 
-            if state.data_needs_refresh {
+            let current_display_mode = state.display_mode.to_owned();
+
+            if state.data_needs_refresh || cache_expired(&state) {
+                info!(target: "tibberator.mainloop", "Fetching new display data for {:?}", state.display_mode);
                 match tibberator::tibber::fetch_display_data(
                     &config.access,
                     &state.display_mode,
@@ -480,8 +485,10 @@ async fn subscription_loop_tui(
                 )
                 .await
                 {
-                    Ok(Some((data, label))) => {
-                        state.bar_graph_data = Some((data, label.to_string()));
+                    Ok(Some((data, label, data_time))) => {
+                        state
+                            .cached_bar_graph
+                            .insert(current_display_mode, (data, label.to_string(), data_time));
                     }
                     Ok(None) => {
                         info!(target: "tibberator.mainloop", "No display data available");
@@ -773,7 +780,7 @@ mod tests {
             should_quit: false,
             measurement: None,
             price_info: None,
-            bar_graph_data: None,
+            cached_bar_graph: HashMap::new(),
             estimated_daily_fees: None,
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),

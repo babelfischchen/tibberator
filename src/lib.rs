@@ -3,7 +3,7 @@
 //! This module contains various helper methods to connect to the Tibber API (see https://developer.tibber.com).
 //! You need an access token in order to use the API.
 pub mod tibber {
-    use chrono::{Local, Timelike};
+    use chrono::{DateTime, FixedOffset, Local, Timelike};
     use futures::{future, stream::StreamExt, task::Poll};
     use log::{debug, error, info, warn};
     use serde::{Deserialize, Serialize};
@@ -203,17 +203,66 @@ pub mod tibber {
         }
     }
 
+    /// Checks if the cached bar graph data is expired based on the current display mode.
+    ///
+    /// This function examines the cache in `AppState` to determine whether the bar graph data
+    /// associated with the current display mode has expired. It compares the cached timestamp
+    /// with the current time and logs the expiration status for debugging purposes.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_state` - A reference to the application state containing the cache and display mode.
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - `true` if the cache is expired, otherwise `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use tibberator::tibber::tui::AppState;
+    /// use tibberator::tibber::cache_expired;
+
+    /// let app_state = AppState::default(); // Assume this initializes with appropriate values
+    /// let is_expired = cache_expired(&app_state);
+    /// println!("Cache expired: {}", is_expired);
+    /// ```
+    pub fn cache_expired(app_state: &AppState) -> bool {
+        app_state
+            .cached_bar_graph
+            .get(&app_state.display_mode)
+            .map_or(true, |(_, _, timestamp)| {
+                let now = Local::now().fixed_offset();
+                let expired = now > *timestamp;
+                debug!(
+                    target: "tibberator.cache",
+                    "Cache {} expired for mode: {:?} (current timestamp: {} vs. now {})",
+                    if expired { "" } else { "not" },
+                    app_state.display_mode,
+                    *timestamp,
+                    now
+                );
+                expired
+            })
+    }
+
     pub async fn fetch_display_data(
         access_config: &AccessConfig,
         display_mode: &DisplayMode,
         estimated_daily_fee: &Option<f64>,
-    ) -> Result<Option<(Vec<f64>, String)>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
         match display_mode {
             output::DisplayMode::Prices => match get_todays_energy_prices(access_config).await {
-                Ok(prices) => Ok(Some((
-                    prices.into_iter().map(|p| p.total).collect(),
-                    String::from("Energy Prices [EUR/kWh]"),
-                ))),
+                Ok(prices) => {
+                    // Add one hour past the last starting time stamp so that the data expire at 12am the next day
+                    let time = prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
+                        + chrono::Duration::hours(1);
+                    Ok(Some((
+                        prices.into_iter().map(|p| p.total).collect(),
+                        String::from("Energy Prices [EUR/kWh]"),
+                        time,
+                    )))
+                }
                 Err(error) => {
                     warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
                     Ok(None)
@@ -221,10 +270,20 @@ pub mod tibber {
             },
             output::DisplayMode::Consumption => {
                 match get_todays_energy_consumption(&access_config).await {
-                    Ok(consumption) => Ok(Some((
-                        consumption.into_iter().map(|c| c.consumption).collect(),
-                        String::from("Energy Consumption [kWh]"),
-                    ))),
+                    Ok(consumption) => {
+                        let time = Local::now()
+                            .with_minute(0)
+                            .and_then(|t| t.with_second(0))
+                            .and_then(|t| t.with_nanosecond(0))
+                            .unwrap_or(Local::now())
+                            .fixed_offset()
+                            + chrono::Duration::hours(1);
+                        Ok(Some((
+                            consumption.into_iter().map(|c| c.consumption).collect(),
+                            String::from("Energy Consumption [kWh]"),
+                            time,
+                        )))
+                    }
                     Err(error) => {
                         warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
                         Ok(None)
@@ -233,16 +292,22 @@ pub mod tibber {
             }
             output::DisplayMode::Cost => {
                 let current_hour = Local::now().hour() as usize;
-                let mut pages_so_far = match get_last_consumption_pages(access_config, current_hour)
-                    .await
+                let (mut pages_so_far, last_data_time) = match get_last_consumption_pages(
+                    access_config,
+                    current_hour,
+                )
+                .await
                 {
-                    Ok(consumption_pages) => consumption_pages
-                        .into_iter()
-                        .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
-                        .collect(),
+                    Ok((consumption_pages, last_data_time)) => (
+                        consumption_pages
+                            .into_iter()
+                            .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
+                            .collect(),
+                        last_data_time + chrono::Duration::hours(1),
+                    ),
                     Err(error) => {
                         warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
-                        Vec::new()
+                        (Vec::new(), Local::now().fixed_offset())
                     }
                 };
 
@@ -255,13 +320,15 @@ pub mod tibber {
                     pages_so_far.push(0.0);
                 }
 
-                Ok(Some((pages_so_far, description_string)))
+                Ok(Some((pages_so_far, description_string, last_data_time)))
             }
         }
     }
 
     #[cfg(test)]
     mod tests {
+        use std::collections::HashMap;
+
         use super::*;
         use chrono::{DateTime, Duration, FixedOffset};
         use data_handling::connect_live_measurement;
@@ -275,7 +342,7 @@ pub mod tibber {
                 measurement: None,
                 price_info: None,
                 estimated_daily_fees: None,
-                bar_graph_data: None,
+                cached_bar_graph: HashMap::new(),
                 display_mode: DisplayMode::Prices,
                 status: String::from("Waiting for data..."),
                 data_needs_refresh: false,
@@ -402,12 +469,13 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config.access, &config.output.display_mode, &None).await;
+            let result =
+                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
 
-            if let Some((prices, description)) = display_data {
+            if let Some((prices, description, _)) = display_data {
                 assert_eq!(prices.len(), 24);
                 assert_eq!(description, "Energy Prices [EUR/kWh]");
             }
@@ -420,15 +488,108 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config.access, &config.output.display_mode, &None).await;
+            let result =
+                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
 
-            if let Some((consumption, description)) = display_data {
+            if let Some((consumption, description, _)) = display_data {
                 assert_eq!(consumption.len(), 24);
                 assert_eq!(description, "Energy Consumption [kWh]");
             }
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_fetch_display_data_cost_mode() {
+            // Test Cost mode
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Cost),
+                logging: LogConfig::default(),
+            };
+
+            let estimated_daily_fee = Some(24.0); // Example daily fee
+
+            let result = fetch_display_data(
+                &config.access,
+                &config.output.display_mode,
+                &estimated_daily_fee,
+            )
+            .await;
+            assert!(result.is_ok());
+            let display_data = result.unwrap();
+            assert!(display_data.is_some());
+
+            if let Some((costs, description, expiry_date)) = display_data {
+                assert_eq!(costs.len(), 24);
+                assert_eq!(description, "Cost [EUR]");
+                // Check if the cost for the current hour is not zero (since we have a daily fee)
+                let current_hour = Local::now().hour();
+                let next_hour = Local::now()
+                    .date_naive()
+                    .and_hms_opt(current_hour + 1, 0, 0)
+                    .unwrap()
+                    .and_local_timezone(Local)
+                    .unwrap()
+                    .fixed_offset();
+
+                assert!(next_hour == expiry_date);
+
+                for i in 0..24 {
+                    if i < current_hour as usize {
+                        assert!(costs[i] > 0.0);
+                    } else {
+                        assert_eq!(costs[i], 0.0);
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_no_cache() {
+            let app_state = create_app_state();
+            assert!(cache_expired(&app_state.lock().unwrap()));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_cache_not_expired() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            let timestamp = Local::now().fixed_offset() + chrono::Duration::minutes(1);
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(!cache_expired(&state));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_cache_expired() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            let timestamp = Local::now().fixed_offset() - chrono::Duration::hours(1);
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(cache_expired(&state));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_different_display_mode() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            state.display_mode = DisplayMode::Consumption;
+            let timestamp = Local::now().fixed_offset();
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(cache_expired(&state));
         }
     }
 }

@@ -1,7 +1,6 @@
-use std::io;
-use std::time::Duration;
+use std::{collections::HashMap, io, time::Duration};
 
-use chrono::{DateTime, Datelike, Local, Timelike};
+use chrono::{DateTime, Datelike, FixedOffset, Local, Timelike};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -12,7 +11,7 @@ use ratatui::text::Line;
 use ratatui::widgets::*;
 
 use crate::tibber::output::DisplayMode;
-use crate::tibber::{live_measurement, PriceInfo};
+use crate::tibber::{cache_expired, live_measurement, PriceInfo};
 
 /// Represents the application state
 #[derive(Debug)]
@@ -25,8 +24,8 @@ pub struct AppState {
     pub price_info: Option<PriceInfo>,
     /// Estimated daily fees
     pub estimated_daily_fees: Option<f64>,
-    /// Bar graph data (values and label)
-    pub bar_graph_data: Option<(Vec<f64>, String)>,
+    /// Cached bar graph data (values, label, and timestamp)
+    pub cached_bar_graph: HashMap<DisplayMode, (Vec<f64>, String, DateTime<FixedOffset>)>,
     /// Display mode (prices or consumption)
     pub display_mode: DisplayMode,
     /// Status message
@@ -42,7 +41,7 @@ impl Default for AppState {
             measurement: None,
             price_info: None,
             estimated_daily_fees: None,
-            bar_graph_data: None,
+            cached_bar_graph: HashMap::new(),
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),
             data_needs_refresh: false,
@@ -90,7 +89,12 @@ pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
                             DisplayMode::Consumption => DisplayMode::Cost,
                             DisplayMode::Cost => DisplayMode::Prices,
                         };
-                        app_state.data_needs_refresh = true;
+
+                        // Check if the cache for the current display mode is expired
+                        let cache_expired = cache_expired(&app_state);
+
+                        app_state.data_needs_refresh =
+                            cache_expired || app_state.data_needs_refresh;
                     }
                     _ => {}
                 }
@@ -384,7 +388,7 @@ fn get_time_interval(app_state: &AppState) -> TimeInterval {
 
 /// Draw the bar graph section
 fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
-    if let Some((data, label)) = &app_state.bar_graph_data {
+    if let Some((data, label, _)) = app_state.cached_bar_graph.get(&app_state.display_mode) {
         let bar_block = Block::default().title(label.clone()).borders(Borders::ALL);
 
         // Create bar data in format (&str, u64)
@@ -399,7 +403,7 @@ fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
     } else {
         // If no data is available, show a message
         let block = Block::default()
-            .title("No data available")
+            .title("Fetching data. Please wait...")
             .borders(Borders::ALL);
 
         frame.render_widget(block, area);

@@ -1,5 +1,5 @@
 use crate::tibber::{live_measurement, PriceInfo};
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, FixedOffset, Local, Timelike};
 use crossterm::{
     cursor, execute, queue,
     style::{SetForegroundColor, Stylize},
@@ -34,7 +34,7 @@ pub enum TaxStyle {
 
 /// `OutputConfig` is a struct that represents the configuration for output.
 /// It contains the following fields: `output_type` and `tax_style`.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Hash, Eq)]
 pub enum DisplayMode {
     Prices,
     Consumption,
@@ -121,7 +121,7 @@ pub fn print_screen(
     tax_style: &TaxStyle,
     data: live_measurement::LiveMeasurementLiveMeasurement,
     price_info: &PriceInfo,
-    bar_graph_data: &Option<(Vec<f64>, String)>,
+    bar_graph_data: &Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
 ) {
     let tax_string = match tax_style {
         TaxStyle::Price => {
@@ -227,7 +227,7 @@ pub fn print_screen(
     stdout().flush().unwrap();
 
     // display a bar graph if `bar_graph_data` contains Some value
-    if let Some((bar_data, bar_label)) = bar_graph_data {
+    if let Some((bar_data, bar_label, _)) = bar_graph_data {
         if let Err(e) = display_bar_graph(bar_data, bar_label, &mut std::io::stdout()) {
             error!("Error displaying bar graph: {}", e);
         }

@@ -889,7 +889,7 @@ pub async fn update_current_energy_price_info(
 async fn get_consumption_page(
     config: &AccessConfig,
     cursor: &String,
-) -> Result<ConsumptionPage, Box<dyn std::error::Error>> {
+) -> Result<(ConsumptionPage, DateTime<FixedOffset>), Box<dyn std::error::Error>> {
     info!(target: "tibberator.consumption", "Fetching consumption page: {:?}", cursor);
 
     let id = config.home_id.to_owned();
@@ -903,18 +903,33 @@ async fn get_consumption_page(
     )
     .await?;
 
-    let consumption_page = consumption_page_response?
+    let consumption_page_data = consumption_page_response?
         .data
         .ok_or(LoopEndingError::InvalidData)?
         .viewer
         .home
         .consumption
-        .ok_or(LoopEndingError::InvalidData)?
-        .page_info;
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    let consumption_page = consumption_page_data.page_info;
+    let edges = consumption_page_data.edges;
 
     info!(target: "tibberator.consumption", "Received consumption page");
 
-    ConsumptionPage::create_from(&consumption_page).ok_or(Box::new(LoopEndingError::InvalidData))
+    let page = ConsumptionPage::create_from(&consumption_page)
+        .ok_or(Box::new(LoopEndingError::InvalidData))?;
+    let time = DateTime::parse_from_rfc3339(
+        edges
+            .ok_or(LoopEndingError::InvalidData)?
+            .first()
+            .ok_or(LoopEndingError::InvalidData)?
+            .as_ref()
+            .ok_or(LoopEndingError::InvalidData)?
+            .node
+            .to
+            .as_str(),
+    )?;
+    Ok((page, time))
 }
 
 /// Estimates the daily fees based on the provided configuration.
@@ -926,10 +941,10 @@ async fn get_consumption_page(
 pub async fn get_last_consumption_pages(
     config: &AccessConfig,
     n: usize,
-) -> Result<Vec<ConsumptionPage>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<ConsumptionPage>, DateTime<FixedOffset>), Box<dyn std::error::Error>> {
     info!(target: "tibberator.consumption", "Retrieving last {} consumption pages", n);
 
-    let mut page = get_consumption_page(&config, &String::from("")).await?;
+    let (mut page, time) = get_consumption_page(&config, &String::from("")).await?;
 
     let mut pages = Vec::new();
 
@@ -937,13 +952,13 @@ pub async fn get_last_consumption_pages(
         let start_cursor = page.start_cursor.clone();
         pages.push(page);
 
-        page = get_consumption_page(&config, &start_cursor).await?;
+        (page, _) = get_consumption_page(&config, &start_cursor).await?;
     }
 
     info!(target: "tibberator.consumption", "Received {} consumption pages", n);
 
     pages.reverse();
-    Ok(pages)
+    Ok((pages, time))
 }
 
 pub async fn estimate_daily_fees(
@@ -1275,7 +1290,7 @@ mod tests {
         let result = get_consumption_page(&config, &String::from("")).await;
         assert!(result.is_ok());
 
-        let consumption_page = result.unwrap();
+        let (consumption_page, _) = result.unwrap();
         assert_eq!(consumption_page.count, 1, "Should have 1 page entries");
         assert_ne!(consumption_page.currency, "");
         assert!(consumption_page.has_previous_page);
@@ -1295,7 +1310,7 @@ mod tests {
         let mut pages = Vec::new();
 
         for _i in 0..10 {
-            let consumption = result.unwrap();
+            let (consumption, _) = result.unwrap();
             assert_eq!(consumption.count, 1, "Should have 1 page entries");
             assert!(consumption.has_previous_page);
             assert_ne!(consumption.start_cursor, "", "Cursor must be valid");

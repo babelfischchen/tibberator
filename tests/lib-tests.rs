@@ -2,7 +2,7 @@ mod mock_subscription;
 
 #[cfg(test)]
 mod lib_tests {
-    use std::{env, future::IntoFuture, time::Duration};
+    use std::{collections::HashMap, env, future::IntoFuture, time::Duration};
 
     use async_tungstenite::{async_std::connect_async, tungstenite::client::IntoClientRequest};
     use futures::StreamExt;
@@ -107,7 +107,7 @@ mod lib_tests {
             measurement: None,
             price_info: None,
             estimated_daily_fees: None,
-            bar_graph_data: None,
+            cached_bar_graph: HashMap::new(),
             display_mode: DisplayMode::Prices,
             status: String::from("Waiting for data..."),
             data_needs_refresh: false,
