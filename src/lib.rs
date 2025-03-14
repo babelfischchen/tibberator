@@ -276,12 +276,13 @@ pub mod tibber {
                 match get_todays_energy_consumption(&access_config).await {
                     Ok(consumption) => {
                         let time = Local::now()
-                            .with_minute(0)
+                            .with_minute(15)
                             .and_then(|t| t.with_second(0))
                             .and_then(|t| t.with_nanosecond(0))
                             .unwrap_or(Local::now())
-                            .fixed_offset()
-                            + chrono::Duration::hours(1);
+                            .fixed_offset();
+                        let offset = if Local::now().minute() < 15 { 0 } else { 1 };
+                        let time = time + chrono::Duration::hours(offset);
                         Ok(Some((
                             consumption.into_iter().map(|c| c.consumption).collect(),
                             String::from("Energy Consumption [kWh]"),
@@ -302,13 +303,18 @@ pub mod tibber {
                 )
                 .await
                 {
-                    Ok((consumption_pages, last_data_time)) => (
-                        consumption_pages
+                    Ok((consumption_pages, last_data_time)) => {
+                        let offset = if Local::now().minute() < 15 { 0 } else { 1 };
+
+                        let consumption_values = consumption_pages
                             .into_iter()
                             .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
-                            .collect(),
-                        last_data_time + chrono::Duration::hours(1),
-                    ),
+                            .collect();
+                        let updated_last_data_time = last_data_time
+                            + chrono::Duration::hours(offset)
+                            + chrono::Duration::minutes(15); // add 15 minutes for the data on the tibber server to update for the last hour
+                        (consumption_values, updated_last_data_time)
+                    }
                     Err(error) => {
                         warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
                         (Vec::new(), Local::now().fixed_offset())

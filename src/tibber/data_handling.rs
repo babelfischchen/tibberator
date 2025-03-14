@@ -961,6 +961,21 @@ pub async fn get_last_consumption_pages(
     Ok((pages, time))
 }
 
+/// Estimates the daily fees based on the total cost and the price excluding fees.
+///
+/// This function takes an `AccessConfig` object which includes necessary configuration details,
+/// fetches fee estimation data from the Tibber API, and calculates the estimated daily fee.
+///
+/// # Arguments
+///
+/// * `config` - A reference to the `AccessConfig` struct containing the home ID and other necessary information.
+///
+/// # Returns
+///
+/// * `Result<Option<f64>, Box<dyn std::error::Error>>`
+///   - `Ok(Some(f64))`: The estimated daily fee if it could be calculated successfully.
+///   - `Ok(None)`: If no price data is available or the calculation fails for some reason.
+///   - `Err(Box<dyn std::error::Error>)`: An error occurred while fetching or processing the data.
 pub async fn estimate_daily_fees(
     config: &AccessConfig,
 ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
