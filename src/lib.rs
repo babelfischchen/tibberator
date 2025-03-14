@@ -106,23 +106,27 @@ pub mod tibber {
     ///
     /// ## Example
     /// ```rust
-    ///   use std::sync::mpsc::{channel, Receiver};
     ///   use tibberator::tibber::{
+    ///                            tui::AppState,
     ///                            Config, loop_for_data,
     ///                            AccessConfig, connect_live_measurement,
     ///                           };
+    ///   use std::sync::{Arc, Mutex};
     ///   use tokio::time;
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     ///   let config = Config::default();
     ///   let mut subscription = connect_live_measurement(&config.access).await;
-    ///   let (sender, receiver) = channel();
+    ///   let app_state = Arc::new(Mutex::new(AppState::default()));
+    ///
+    ///   let state = app_state.clone();
+
     ///   tokio::spawn(async move {
     ///     std::thread::sleep(time::Duration::from_secs(3));
-    ///     sender.send(true).unwrap();
+    ///     app_state.lock().unwrap().should_quit = true;
     ///   });
-    ///   let result = loop_for_data(&config, &mut subscription, &receiver).await;
+    ///   let result = loop_for_data(&config, &mut subscription, state).await;
     ///   assert!(result.is_ok());
     /// # }
     /// ```

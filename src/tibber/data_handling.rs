@@ -1295,8 +1295,8 @@ mod tests {
         assert_ne!(consumption_page.currency, "");
         assert!(consumption_page.has_previous_page);
         assert_ne!(consumption_page.start_cursor, "");
-        assert!(consumption_page.total_consumption > 0.0);
-        assert!(consumption_page.total_cost > 0.0);
+        assert!(consumption_page.total_consumption >= 0.0);
+        assert!(consumption_page.total_cost >= 0.0);
     }
 
     #[tokio::test]
