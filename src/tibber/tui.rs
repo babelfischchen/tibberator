@@ -118,6 +118,7 @@ pub fn draw_ui(frame: &mut Frame, app_state: &AppState) {
             Constraint::Length(3), // Header
             Constraint::Length(6), // Main content
             Constraint::Min(20),   // Bar graph
+            Constraint::Length(3), // Footer
         ])
         .split(frame.area());
 
@@ -129,6 +130,9 @@ pub fn draw_ui(frame: &mut Frame, app_state: &AppState) {
 
     // Draw the bar graph
     draw_bar_graph(frame, app_state, chunks[2]);
+
+    // Draw the footer
+    draw_footer(frame, chunks[3]);
 }
 
 /// Draw the header section
@@ -413,4 +417,28 @@ fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
 
         frame.render_widget(block, area);
     }
+}
+
+/// Draw the footer section
+fn draw_footer(frame: &mut Frame, area: Rect) {
+    let footer_text = Line::from(vec![
+        Span::styled("[q] ", Style::default().fg(Color::Red)),
+        Span::styled("Quit, ", Style::default().fg(Color::White)),
+        Span::styled("[d] ", Style::default().fg(Color::Green)),
+        Span::styled("Next Display, ", Style::default().fg(Color::White)),
+        Span::styled("[s] ", Style::default().fg(Color::Yellow)),
+        Span::styled("Previous Display", Style::default().fg(Color::White)),
+    ]);
+
+    let footer_block = Block::default()
+        .title("Shortcuts")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Gray));
+
+    let footer_paragraph = Paragraph::new(footer_text)
+        .block(footer_block)
+        .style(Style::default().fg(Color::White))
+        .alignment(Alignment::Center);
+
+    frame.render_widget(footer_paragraph, area);
 }
