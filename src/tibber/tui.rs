@@ -92,6 +92,15 @@ pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
                         app_state.data_needs_refresh =
                             cache_expired || app_state.data_needs_refresh;
                     }
+                    KeyCode::Char('s') => {
+                        app_state.display_mode = app_state.display_mode.prev();
+
+                        // Check if the cache for the current display mode is expired
+                        let cache_expired = cache_expired(&app_state);
+
+                        app_state.data_needs_refresh =
+                            cache_expired || app_state.data_needs_refresh;
+                    }
                     _ => {}
                 }
             }

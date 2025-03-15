@@ -49,6 +49,14 @@ impl DisplayMode {
             DisplayMode::Cost => DisplayMode::Prices,
         }
     }
+
+    pub fn prev(&self) -> DisplayMode {
+        match self {
+            DisplayMode::Prices => DisplayMode::Cost,
+            DisplayMode::Consumption => DisplayMode::Prices,
+            DisplayMode::Cost => DisplayMode::Consumption,
+        }
+    }
 }
 
 /// `GuiMode` is an enum that represents the different modes of the GUI. It can be one of the following: `Simple` or `Advanced`.
