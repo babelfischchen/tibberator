@@ -289,6 +289,9 @@ pub mod tibber {
             output::DisplayMode::Prices => get_prices_today(access_config).await,
             output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
             output::DisplayMode::Cost => get_cost_data(access_config, estimated_daily_fee).await,
+            output::DisplayMode::CostLast30Days => {
+                get_cost_last_30_days(access_config, estimated_daily_fee).await
+            }
         }
     }
 

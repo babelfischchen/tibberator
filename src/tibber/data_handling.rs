@@ -69,7 +69,7 @@ struct PriceHourly;
     query_path = "tibber/consumption_hourly.graphql",
     response_derives = "Debug"
 )]
-struct ConsumptionHourly;
+struct Consumption;
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -86,6 +86,20 @@ struct ConsumptionHourlyPageInfo;
     response_derives = "Debug"
 )]
 struct FeeEstimation;
+
+enum EnergyResolution {
+    Hourly,
+    Daily,
+}
+
+impl EnergyResolution {
+    fn to_consumption_resolution(&self) -> consumption::EnergyResolution {
+        match self {
+            EnergyResolution::Hourly => consumption::EnergyResolution::HOURLY,
+            EnergyResolution::Daily => consumption::EnergyResolution::DAILY,
+        }
+    }
+}
 
 /// Trait to define the common fields required for parsing price info.
 trait PriceInfoFields {
@@ -335,7 +349,7 @@ pub struct ConsumptionNode {
 impl ConsumptionNode {
     /// Parses a single consumption data point and returns a `ConsumptionNode`.
     fn parse_consumption_node(
-        consumption_data: &consumption_hourly::ConsumptionHourlyViewerHomeConsumptionNodes,
+        consumption_data: &consumption::ConsumptionViewerHomeConsumptionNodes,
     ) -> Option<Self> {
         let from = chrono::DateTime::parse_from_rfc3339(consumption_data.from.as_str()).ok()?;
         let to = chrono::DateTime::parse_from_rfc3339(consumption_data.to.as_str()).ok()?;
@@ -352,7 +366,7 @@ impl ConsumptionNode {
 
     /// The `new_nodes` method for `ConsumptionNode` provides a way to create a vector of `ConsumptionNode` instances from a given list of consumption data.
     fn new_nodes(
-        consumption_list: consumption_hourly::ConsumptionHourlyViewerHomeConsumption,
+        consumption_list: consumption::ConsumptionViewerHomeConsumption,
     ) -> Option<Vec<Self>> {
         let mut nodes = Vec::new();
 
@@ -370,7 +384,7 @@ impl ConsumptionNode {
     /// The `new_nodes_today` method for `ConsumptionNode` provides a way to create a vector of `ConsumptionNode` instances from a given list of consumption data,
     /// filtering only those nodes that belong to the current day and filling in missing hours with 0 values for consumption and cost.
     fn new_nodes_today(
-        consumption_list: consumption_hourly::ConsumptionHourlyViewerHomeConsumption,
+        consumption_list: consumption::ConsumptionViewerHomeConsumption,
     ) -> Option<Vec<Self>> {
         let nodes = Self::new_nodes(consumption_list)?;
 
@@ -832,10 +846,12 @@ async fn get_todays_energy_consumption(
     info!(target: "tibberator.consumption", "Fetching today's energy consumption.");
 
     let id = config.home_id.to_owned();
-    let variables = consumption_hourly::Variables { id };
+    let res = EnergyResolution::Hourly.to_consumption_resolution();
+    let n = 24;
+    let variables = consumption::Variables { id, res, n };
     let consumption_data_response = timeout(
         tokio::time::Duration::from_secs(10),
-        fetch_data::<ConsumptionHourly>(config, variables),
+        fetch_data::<Consumption>(config, variables),
     )
     .await?;
 
@@ -850,6 +866,34 @@ async fn get_todays_energy_consumption(
     info!(target: "tibberator.consumption", "Received hourly consumption data");
 
     ConsumptionNode::new_nodes_today(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+async fn get_last_30_days_energy_consumption(
+    config: &AccessConfig,
+) -> Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.consumption", "Fetching last 30 days energy consumption.");
+
+    let id = config.home_id.to_owned();
+    let res = EnergyResolution::Daily.to_consumption_resolution();
+    let n = 30;
+    let variables = consumption::Variables { id, res, n };
+    let consumption_data_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<Consumption>(config, variables),
+    )
+    .await?;
+
+    let consumption_data = consumption_data_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .consumption
+        .ok_or(LoopEndingError::InvalidData)?;
+
+    info!(target: "tibberator.consumption", "Received daily consumption data");
+
+    ConsumptionNode::new_nodes(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
 }
 
 /// Fetches the energy consumption data for today.
@@ -917,6 +961,36 @@ pub async fn get_consumption_data_today(
         }
         Err(error) => {
             warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
+            Ok(None)
+        }
+    }
+}
+
+pub async fn get_cost_last_30_days(
+    access_config: &AccessConfig,
+    estimated_daily_fee: &Option<f64>,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    match get_last_30_days_energy_consumption(&access_config).await {
+        Ok(consumption) => {
+            let time = consumption.last().ok_or(LoopEndingError::InvalidData)?.to
+                + chrono::Duration::days(1);
+            Ok(Some((
+                consumption
+                    .into_iter()
+                    .map(|c| {
+                        let rounded_cost = (c.cost * 100.0).round() / 100.0;
+                        let rounded_fee = estimated_daily_fee
+                            .map(|fee| (fee * 100.0).round() / 100.0)
+                            .unwrap_or(0.0);
+                        rounded_cost + rounded_fee
+                    })
+                    .collect(),
+                String::from("Daily Cost [EUR]"),
+                time,
+            )))
+        }
+        Err(error) => {
+            warn!(target: "tibberator.mainloop", "Failed to fetch last 30 days energy consumption: {:?}", error.to_string());
             Ok(None)
         }
     }

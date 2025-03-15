@@ -333,7 +333,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
             let label_text = match interval {
                 TimeInterval::Hourly => format!("{:02}", index),
                 TimeInterval::Last30Days => {
-                    let date = current_date - chrono::Duration::days(29 - index as i64);
+                    let date = current_date - chrono::Duration::days(30 - index as i64);
                     date.format("%d").to_string()
                 }
                 TimeInterval::Last12Months => {
@@ -359,7 +359,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
 
             let is_highlighted = match interval {
                 TimeInterval::Hourly => index == current_hour,
-                TimeInterval::Last30Days => index == 29, // Highlight the current day, which is likely the last in the array
+                TimeInterval::Last30Days => index == 30, // one beyond last entry, no highlight
                 TimeInterval::Last12Months => index == 11, // Highlight the current month
                 TimeInterval::Years => index == data.len() - 1, // Highlight the current year
             };
@@ -392,6 +392,7 @@ fn get_time_interval(app_state: &AppState) -> TimeInterval {
         DisplayMode::Prices => TimeInterval::Hourly,
         DisplayMode::Consumption => TimeInterval::Hourly,
         DisplayMode::Cost => TimeInterval::Hourly,
+        DisplayMode::CostLast30Days => TimeInterval::Last30Days,
     }
 }
 
@@ -400,11 +401,16 @@ fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
     if let Some((data, label, _)) = app_state.cached_bar_graph.get(&app_state.display_mode) {
         let bar_block = Block::default().title(label.clone()).borders(Borders::ALL);
 
+        let time_interval = get_time_interval(app_state);
+        let bar_width = match time_interval {
+            _ => 4,
+        };
+
         // Create bar data in format (&str, u64)
-        let bar_data: Vec<Bar> = create_bar_data(data, get_time_interval(app_state));
+        let bar_data: Vec<Bar> = create_bar_data(data, time_interval);
         let chart = BarChart::default()
             .block(bar_block)
-            .bar_width(4)
+            .bar_width(bar_width)
             .bar_gap(1)
             .data(BarGroup::default().bars(&bar_data));
 
