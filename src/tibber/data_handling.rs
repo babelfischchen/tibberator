@@ -4,7 +4,7 @@ use async_tungstenite::{
     tungstenite::handshake::client::{generate_key, Response},
     WebSocketStream,
 };
-use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, TimeZone, Timelike, Utc};
 use crossterm::style;
 use graphql_client::{reqwest::post_graphql, GraphQLQuery};
 use graphql_ws_client::{graphql::StreamingOperation, Client as WSClient, Subscription};
@@ -785,7 +785,7 @@ async fn get_current_energy_price(
 ///
 /// * `Result<Vec<PriceInfo>, Box<dyn std::error::Error>>`: Today's hourly energy prices or an error.
 ///
-pub async fn get_todays_energy_prices(
+async fn get_todays_energy_prices(
     config: &AccessConfig,
 ) -> Result<Vec<PriceInfo>, Box<dyn std::error::Error>> {
     info!(target: "tibberator.price", "Fetching today's energy prices.");
@@ -826,7 +826,7 @@ pub async fn get_todays_energy_prices(
 ///
 /// * `Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>>`: Today's hourly energy consumption or an error.
 ///
-pub async fn get_todays_energy_consumption(
+async fn get_todays_energy_consumption(
     config: &AccessConfig,
 ) -> Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>> {
     info!(target: "tibberator.consumption", "Fetching today's energy consumption.");
@@ -850,6 +850,129 @@ pub async fn get_todays_energy_consumption(
     info!(target: "tibberator.consumption", "Received hourly consumption data");
 
     ConsumptionNode::new_nodes_today(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+/// Fetches the energy consumption data for today.
+///
+/// This function retrieves the energy consumption data from the Tibber API for the current day.
+/// It then formats the data, setting the time to the nearest 15-minute mark and adjusting the hour
+/// offset accordingly. If successful, it returns a tuple containing the consumption values,
+/// a label for the y-axis, and the corresponding timestamp. If an error occurs during the fetch,
+/// it logs a warning and returns `None`.
+///
+/// # Arguments
+///
+/// * `access_config` - A reference to the access configuration needed to make API requests.
+///
+/// # Returns
+///
+/// A `Result` containing:
+/// - `Ok(Some((Vec<f64>, String, DateTime<FixedOffset>)))`: If successful, returns a tuple with consumption data,
+///   y-axis label, and timestamp.
+/// - `Ok(None)`: If an error occurs during the fetch, logs a warning and returns `None`.
+///
+/// # Errors
+///
+/// This function does not return any specific errors. Any issues encountered during the API request are logged as warnings.
+///
+/// # Examples
+///
+/// ```rust
+/// use tibberator::tibber::get_consumption_data_today;
+/// use tibberator::tibber::AccessConfig;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let access_config = AccessConfig::default();
+///
+///     match get_consumption_data_today(&access_config).await {
+///         Ok(Some((consumption, label, time))) => {
+///             println!("Consumption Data: {:?}", consumption);
+///             println!("Label: {}", label);
+///             println!("Timestamp: {}", time);
+///         }
+///         Ok(None) => println!("Failed to fetch today's energy consumption."),
+///         Err(e) => println!("An error occurred: {}", e),
+///     }
+/// }
+/// ```
+pub async fn get_consumption_data_today(
+    access_config: &AccessConfig,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    match get_todays_energy_consumption(&access_config).await {
+        Ok(consumption) => {
+            let time = Local::now()
+                .with_minute(15)
+                .and_then(|t| t.with_second(0))
+                .and_then(|t| t.with_nanosecond(0))
+                .unwrap_or(Local::now())
+                .fixed_offset();
+            let offset = if Local::now().minute() < 15 { 0 } else { 1 };
+            let time = time + chrono::Duration::hours(offset);
+            Ok(Some((
+                consumption.into_iter().map(|c| c.consumption).collect(),
+                String::from("Energy Consumption [kWh]"),
+                time,
+            )))
+        }
+        Err(error) => {
+            warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
+            Ok(None)
+        }
+    }
+}
+
+/// Fetches the current day's energy prices from Tibber API.
+///
+/// # Arguments
+/// * `access_config` - A reference to the access configuration containing the necessary credentials.
+///
+/// # Returns
+/// * `Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`:
+///   - `Ok(Some((prices, label, expiration_time)))`: Contains a vector of energy prices in EUR/kWh,
+///     a label describing the data, and the expiration time when the data will be considered stale.
+///   - `Ok(None)`: Indicates that no data could be fetched or processed.
+///   - `Err(error)`: Returns an error if there was a problem fetching or processing the energy prices.
+///
+/// # Example
+/// ```
+/// use tibberator::tibber::get_prices_today;
+/// use tibberator::tibber::AccessConfig;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let access_config = AccessConfig::default();
+///
+///     match get_prices_today(&access_config).await {
+///         Ok(Some((prices, label, expiration_time))) => {
+///             println!("Energy Prices: {:?}", prices);
+///             println!("Label: {}", label);
+///             println!("Expiration Time: {}", expiration_time.to_rfc3339());
+///         }
+///         Ok(None) => println!("No energy prices data available."),
+///         Err(error) => eprintln!("Error fetching energy prices: {}", error),
+///     }
+/// }
+/// ```
+pub async fn get_prices_today(
+    access_config: &AccessConfig,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    match get_todays_energy_prices(access_config).await {
+        Ok(prices) => {
+            // Add one hour past the last starting time stamp so that the data expire at 12am the next day
+            let time = prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
+                + chrono::Duration::hours(1);
+            Ok(Some((
+                prices.into_iter().map(|p| p.total).collect(),
+                String::from("Energy Prices [EUR/kWh]"),
+                time,
+            )))
+        }
+        Err(error) => {
+            warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
+            Ok(None)
+        }
+    }
 }
 
 /// Updates or retrieves the current energy price information based on the provided configuration and existing price info.
@@ -938,7 +1061,7 @@ async fn get_consumption_page(
 ///   - Ok(Some(fee)): Successfully calculated daily fee
 ///   - Ok(None): No data available to calculate fees
 ///   - Err: An error occurred during calculation
-pub async fn get_last_consumption_pages(
+async fn get_last_consumption_pages(
     config: &AccessConfig,
     n: usize,
 ) -> Result<(Vec<ConsumptionPage>, DateTime<FixedOffset>), Box<dyn std::error::Error>> {
@@ -959,6 +1082,74 @@ pub async fn get_last_consumption_pages(
 
     pages.reverse();
     Ok((pages, time))
+}
+
+/// Retrieves the cost data for energy consumption based on the provided access configuration and estimated daily fee.
+///
+/// This function fetches the last consumption pages using the `get_last_consumption_pages` function, calculates the total cost for each page by adding half of the estimated daily fee to the actual total cost, and updates the last data time accordingly. If no data is found or an error occurs during the fetching process, the function will return an empty vector and the current timestamp.
+///
+/// # Arguments
+/// * `access_config` - A reference to the access configuration used for fetching the consumption pages.
+/// * `estimated_daily_fee` - An optional reference to the estimated daily fee that is added to each page's total cost.
+///
+/// # Returns
+/// * `Ok(Some((Vec<f64>, String, DateTime<FixedOffset>)))` - A tuple containing a vector of cost values in EUR, a description string, and the last data time if successful.
+/// * `Ok(None)` - If no data is found or an error occurs during the fetching process.
+/// * `Err(Box<dyn std::error::Error>)` - An error if there's an issue with the fetch operation.
+///
+/// # Examples
+/// ```
+/// use tibberator::tibber::{AccessConfig, get_cost_data};
+///
+/// # #[tokio::main]
+/// # async fn main() {
+///     let access_config = AccessConfig::default();
+///     let estimated_daily_fee = Some(0.5);
+///     match get_cost_data(&access_config, &estimated_daily_fee).await {
+///         Ok(Some((costs, description, last_data_time))) => println!("Cost Data: {:?}", costs),
+///         Ok(None) => println!("No data found."),
+///         Err(e) => eprintln!("Error fetching cost data: {}", e),
+///     }
+/// }
+/// ```
+pub async fn get_cost_data(
+    access_config: &AccessConfig,
+    estimated_daily_fee: &Option<f64>,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    let current_hour = Local::now().hour() as usize;
+    let (mut pages_so_far, last_data_time) = match get_last_consumption_pages(
+        access_config,
+        current_hour,
+    )
+    .await
+    {
+        Ok((consumption_pages, last_data_time)) => {
+            let offset = if Local::now().minute() < 15 { 0 } else { 1 };
+
+            let consumption_values = consumption_pages
+                .into_iter()
+                .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
+                .collect();
+            let updated_last_data_time =
+                last_data_time + chrono::Duration::hours(offset) + chrono::Duration::minutes(15); // add 15 minutes for the data on the tibber server to update for the last hour
+            (consumption_values, updated_last_data_time)
+        }
+        Err(error) => {
+            warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
+            (Vec::new(), Local::now().fixed_offset())
+        }
+    };
+
+    if pages_so_far.is_empty() {
+        return Ok(None);
+    }
+
+    let description_string = String::from("Cost [EUR]");
+    for _i in 0..(24 - current_hour) {
+        pages_so_far.push(0.0);
+    }
+
+    Ok(Some((pages_so_far, description_string, last_data_time)))
 }
 
 /// Estimates the daily fees based on the total cost and the price excluding fees.

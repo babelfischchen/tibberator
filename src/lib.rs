@@ -3,9 +3,9 @@
 //! This module contains various helper methods to connect to the Tibber API (see https://developer.tibber.com).
 //! You need an access token in order to use the API.
 pub mod tibber {
-    use chrono::{DateTime, FixedOffset, Local, Timelike};
+    use chrono::{DateTime, FixedOffset, Local};
     use futures::{future, stream::StreamExt, task::Poll};
-    use log::{debug, error, info, warn};
+    use log::{debug, error, info};
     use serde::{Deserialize, Serialize};
     use std::{
         cell::Cell,
@@ -15,12 +15,7 @@ pub mod tibber {
         time::Instant,
     };
 
-    pub use data_handling::{
-        connect_live_measurement, estimate_daily_fees, fetch_home_data, get_home_ids,
-        get_last_consumption_pages, get_todays_energy_consumption, get_todays_energy_prices,
-        live_measurement, update_current_energy_price_info, AccessConfig, ConsumptionNode,
-        LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError, PriceInfo,
-    };
+    pub use data_handling::*;
     use output::{print_screen, DisplayMode, OutputConfig};
     use tui::AppState;
 
@@ -250,88 +245,50 @@ pub mod tibber {
             })
     }
 
+    /// Fetches display data based on the specified display mode.
+    ///
+    /// # Arguments
+    /// * `access_config` - A reference to the access configuration for fetching data.
+    /// * `display_mode` - A reference to the display mode indicating what type of data to fetch (prices, consumption, or cost).
+    /// * `estimated_daily_fee` - An optional reference to the estimated daily fee used in cost calculations.
+    ///
+    /// # Returns
+    /// * `Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`
+    ///   - `Ok(Some((prices, consumption_data, timestamp)))` if data is successfully fetched and contains prices, consumption data, and a timestamp.
+    ///   - `Ok(None)` if no data is available.
+    ///   - `Err(e)` if an error occurs during the fetch operation.
+    ///
+    /// # Examples
+    /// ```
+    /// use tibberator::html_logger::LogConfig;
+    /// use tibberator::tibber::{output::{self, GuiMode, OutputConfig, OutputType}, AccessConfig, Config, fetch_display_data};
+    /// use chrono::FixedOffset;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mut config = Config::default();
+    ///     let estimated_daily_fee = Some(10.5);
+    ///
+    ///     match fetch_display_data(&config.access, &config.output.display_mode, &estimated_daily_fee).await {
+    ///         Ok(Some((prices, consumption_data, timestamp))) => {
+    ///             println!("Prices: {:?}", prices);
+    ///             println!("Consumption Data: {:?}", consumption_data);
+    ///             println!("Timestamp: {:?}", timestamp);
+    ///         }
+    ///         Ok(None) => println!("No data available."),
+    ///         Err(e) => eprintln!("Error fetching display data: {}", e),
+    ///     }
+    /// }
+    /// ```
     pub async fn fetch_display_data(
         access_config: &AccessConfig,
         display_mode: &DisplayMode,
         estimated_daily_fee: &Option<f64>,
     ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
         match display_mode {
-            output::DisplayMode::Prices => match get_todays_energy_prices(access_config).await {
-                Ok(prices) => {
-                    // Add one hour past the last starting time stamp so that the data expire at 12am the next day
-                    let time = prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
-                        + chrono::Duration::hours(1);
-                    Ok(Some((
-                        prices.into_iter().map(|p| p.total).collect(),
-                        String::from("Energy Prices [EUR/kWh]"),
-                        time,
-                    )))
-                }
-                Err(error) => {
-                    warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
-                    Ok(None)
-                }
-            },
-            output::DisplayMode::Consumption => {
-                match get_todays_energy_consumption(&access_config).await {
-                    Ok(consumption) => {
-                        let time = Local::now()
-                            .with_minute(15)
-                            .and_then(|t| t.with_second(0))
-                            .and_then(|t| t.with_nanosecond(0))
-                            .unwrap_or(Local::now())
-                            .fixed_offset();
-                        let offset = if Local::now().minute() < 15 { 0 } else { 1 };
-                        let time = time + chrono::Duration::hours(offset);
-                        Ok(Some((
-                            consumption.into_iter().map(|c| c.consumption).collect(),
-                            String::from("Energy Consumption [kWh]"),
-                            time,
-                        )))
-                    }
-                    Err(error) => {
-                        warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
-                        Ok(None)
-                    }
-                }
-            }
-            output::DisplayMode::Cost => {
-                let current_hour = Local::now().hour() as usize;
-                let (mut pages_so_far, last_data_time) = match get_last_consumption_pages(
-                    access_config,
-                    current_hour,
-                )
-                .await
-                {
-                    Ok((consumption_pages, last_data_time)) => {
-                        let offset = if Local::now().minute() < 15 { 0 } else { 1 };
-
-                        let consumption_values = consumption_pages
-                            .into_iter()
-                            .map(|c| c.total_cost + estimated_daily_fee.unwrap_or(0.0) / 24.0)
-                            .collect();
-                        let updated_last_data_time = last_data_time
-                            + chrono::Duration::hours(offset)
-                            + chrono::Duration::minutes(15); // add 15 minutes for the data on the tibber server to update for the last hour
-                        (consumption_values, updated_last_data_time)
-                    }
-                    Err(error) => {
-                        warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
-                        (Vec::new(), Local::now().fixed_offset())
-                    }
-                };
-
-                if pages_so_far.is_empty() {
-                    return Ok(None);
-                }
-
-                let description_string = String::from("Cost [EUR]");
-                for _i in 0..(24 - current_hour) {
-                    pages_so_far.push(0.0);
-                }
-
-                Ok(Some((pages_so_far, description_string, last_data_time)))
-            }
+            output::DisplayMode::Prices => get_prices_today(access_config).await,
+            output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
+            output::DisplayMode::Cost => get_cost_data(access_config, estimated_daily_fee).await,
         }
     }
 
@@ -340,7 +297,7 @@ pub mod tibber {
         use std::collections::HashMap;
 
         use super::*;
-        use chrono::{DateTime, Duration, FixedOffset};
+        use chrono::{DateTime, Duration, FixedOffset, Timelike};
         use data_handling::connect_live_measurement;
         use output::OutputType;
         use serial_test::serial;
