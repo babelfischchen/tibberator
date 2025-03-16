@@ -1,0 +1,22 @@
+query ConsumptionHourlyPageInfo($id: ID!, $cursor: String) {
+  viewer {
+    home(id: $id) {
+      consumption(resolution: HOURLY, before: $cursor, last: 1) {
+        edges {
+          node {
+            from
+            to
+          }
+        }
+        pageInfo {
+          startCursor
+          hasPreviousPage
+          count
+          totalCost
+          totalConsumption
+          currency
+        }
+      }
+    }
+  }
+}

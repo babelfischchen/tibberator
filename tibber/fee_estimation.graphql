@@ -1,0 +1,16 @@
+query FeeEstimation($id: ID!) {
+  viewer {
+    home(id: $id) {
+      consumption(resolution: MONTHLY, last: 1, before: "") {
+        nodes {
+          cost
+        }
+        pageInfo {
+          startCursor
+          totalCost
+          currency
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+query ConsumptionPageInfo($id: ID!, $res: EnergyResolution!, $cursor: String, $n: Int!) {
+  viewer {
+    home(id: $id) {
+      consumption(resolution: $res, before: $cursor, last: $n) {
+        pageInfo {
+          startCursor
+          hasPreviousPage
+          count
+          totalCost
+          totalConsumption
+          currency
+        }
+      }
+    }
+  }
+}

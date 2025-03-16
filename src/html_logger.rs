@@ -5,7 +5,7 @@ use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
 use std::thread;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LogConfig {
     log_level: String,
 }

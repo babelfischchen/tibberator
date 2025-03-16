@@ -1,7 +1,7 @@
-query ConsumptionHourly($id: ID!) {
+query Consumption($id: ID!, $res: EnergyResolution!, $n: Int!) {
   viewer {
     home(id: $id) {
-      consumption(resolution: HOURLY, last: 24) {
+      consumption(resolution: $res, last: $n) {
         nodes {
           from
           to

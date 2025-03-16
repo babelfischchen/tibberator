@@ -8,6 +8,7 @@ reconnect_timeout = 30
 output_type = "Silent"
 tax_style = "None"
 display_mode = "Prices"
+gui_mode = "Simple"
 
 [logging]
 log_level = "info"

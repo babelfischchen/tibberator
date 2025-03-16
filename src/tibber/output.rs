@@ -1,5 +1,5 @@
 use crate::tibber::{live_measurement, PriceInfo};
-use chrono::{DateTime, Local, Timelike};
+use chrono::{DateTime, FixedOffset, Local, Timelike};
 use crossterm::{
     cursor, execute, queue,
     style::{SetForegroundColor, Stylize},
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// `OutputType` is an enum that represents the different types of output.
 /// It can be one of the following: `Full` or `Silent`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum OutputType {
     Full,
     Silent,
@@ -25,7 +25,7 @@ pub enum OutputType {
 
 /// `TaxStyle` is an enum that represents the different styles of tax.
 /// It can be one of the following: `Price`, `Percent`, or `None`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum TaxStyle {
     Price,
     Percent,
@@ -34,17 +34,55 @@ pub enum TaxStyle {
 
 /// `OutputConfig` is a struct that represents the configuration for output.
 /// It contains the following fields: `output_type` and `tax_style`.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Hash, Eq)]
 pub enum DisplayMode {
     Prices,
     Consumption,
+    Cost,
+    CostLast30Days,
+    CostLast12Months,
+    AllYears,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+impl DisplayMode {
+    pub fn next(&self) -> DisplayMode {
+        match self {
+            DisplayMode::Prices => DisplayMode::Consumption,
+            DisplayMode::Consumption => DisplayMode::Cost,
+            DisplayMode::Cost => DisplayMode::CostLast30Days,
+            DisplayMode::CostLast30Days => DisplayMode::CostLast12Months,
+            DisplayMode::CostLast12Months => DisplayMode::AllYears,
+            DisplayMode::AllYears => DisplayMode::Prices,
+        }
+    }
+
+    pub fn prev(&self) -> DisplayMode {
+        match self {
+            DisplayMode::Prices => DisplayMode::AllYears,
+            DisplayMode::Consumption => DisplayMode::Prices,
+            DisplayMode::Cost => DisplayMode::Consumption,
+            DisplayMode::CostLast30Days => DisplayMode::Cost,
+            DisplayMode::CostLast12Months => DisplayMode::CostLast30Days,
+            DisplayMode::AllYears => DisplayMode::CostLast12Months,
+        }
+    }
+}
+
+/// `GuiMode` is an enum that represents the different modes of the GUI. It can be one of the following: `Simple` or `Advanced`.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub enum GuiMode {
+    Simple,
+    Advanced,
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,
     pub display_mode: DisplayMode,
+    pub gui_mode: GuiMode,
+
 }
 
 /// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full`, `tax_style` as `Price`, and `display_mode` as `Prices`.
@@ -54,6 +92,7 @@ impl Default for OutputConfig {
             output_type: OutputType::Full,
             tax_style: TaxStyle::Price,
             display_mode: DisplayMode::Prices,
+            gui_mode: GuiMode::Advanced,
         }
     }
 }
@@ -70,12 +109,19 @@ impl OutputConfig {
             output_type,
             tax_style: TaxStyle::None,
             display_mode: DisplayMode::Prices,
+            gui_mode: GuiMode::Advanced,
         }
     }
 
     /// Creates a new OutputConfig with the specified display mode
     pub fn with_display_mode(mut self, display_mode: DisplayMode) -> Self {
         self.display_mode = display_mode;
+        self
+    }
+
+    /// Creates a new OutputConfig with the specified gui mode
+    pub fn with_gui_mode(mut self, gui_mode: GuiMode) -> Self {
+        self.gui_mode = gui_mode;
         self
     }
 
@@ -102,7 +148,7 @@ pub fn print_screen(
     tax_style: &TaxStyle,
     data: live_measurement::LiveMeasurementLiveMeasurement,
     price_info: &PriceInfo,
-    bar_graph_data: &Option<(Vec<f64>, &str)>,
+    bar_graph_data: &Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
 ) {
     let tax_string = match tax_style {
         TaxStyle::Price => {
@@ -208,7 +254,7 @@ pub fn print_screen(
     stdout().flush().unwrap();
 
     // display a bar graph if `bar_graph_data` contains Some value
-    if let Some((bar_data, bar_label)) = bar_graph_data {
+    if let Some((bar_data, bar_label, _)) = bar_graph_data {
         if let Err(e) = display_bar_graph(bar_data, bar_label, &mut std::io::stdout()) {
             error!("Error displaying bar graph: {}", e);
         }

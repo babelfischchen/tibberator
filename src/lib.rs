@@ -3,30 +3,27 @@
 //! This module contains various helper methods to connect to the Tibber API (see https://developer.tibber.com).
 //! You need an access token in order to use the API.
 pub mod tibber {
+    use chrono::{DateTime, FixedOffset, Local};
     use futures::{future, stream::StreamExt, task::Poll};
-    use log::{debug, error, info, warn};
+    use log::{debug, error, info};
     use serde::{Deserialize, Serialize};
     use std::{
         cell::Cell,
         rc::Rc,
         sync::mpsc::{Receiver, RecvTimeoutError},
+        sync::{Arc, Mutex},
         time::Instant,
     };
 
-    pub use data_handling::{
-        connect_live_measurement, fetch_home_data, get_home_ids, live_measurement, AccessConfig,
-        ConsumptionNode, LiveMeasurementOperation, LiveMeasurementSubscription, LoopEndingError,
-        PriceInfo,
-    };
-    use data_handling::{
-        get_todays_energy_consumption, get_todays_energy_prices, update_current_energy_price_info,
-    };
-    use output::{print_screen, OutputConfig};
+    pub use data_handling::*;
+    use output::{print_screen, DisplayMode, OutputConfig};
+    use tui::AppState;
 
     use crate::html_logger::LogConfig;
 
     mod data_handling;
     pub mod output;
+    pub mod tui;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct Config {
@@ -44,7 +41,6 @@ pub mod tibber {
             }
         }
     }
-
     /// # `check_user_shutdown`
     ///
     /// ## Description
@@ -105,34 +101,38 @@ pub mod tibber {
     ///
     /// ## Example
     /// ```rust
-    ///   use std::sync::mpsc::{channel, Receiver};
     ///   use tibberator::tibber::{
+    ///                            tui::AppState,
     ///                            Config, loop_for_data,
     ///                            AccessConfig, connect_live_measurement,
     ///                           };
+    ///   use std::sync::{Arc, Mutex};
     ///   use tokio::time;
     ///
     /// # #[tokio::main]
     /// # async fn main() {
     ///   let config = Config::default();
     ///   let mut subscription = connect_live_measurement(&config.access).await;
-    ///   let (sender, receiver) = channel();
+    ///   let app_state = Arc::new(Mutex::new(AppState::default()));
+    ///
+    ///   let state = app_state.clone();
+
     ///   tokio::spawn(async move {
     ///     std::thread::sleep(time::Duration::from_secs(3));
-    ///     sender.send(true).unwrap();
+    ///     app_state.lock().unwrap().should_quit = true;
     ///   });
-    ///   let result = loop_for_data(&config, &mut subscription, &receiver).await;
+    ///   let result = loop_for_data(&config, &mut subscription, state).await;
     ///   assert!(result.is_ok());
     /// # }
     /// ```
     pub async fn loop_for_data(
         config: &Config,
         subscription: &mut LiveMeasurementSubscription,
-        receiver: &Receiver<bool>,
+        app_state: Arc<Mutex<AppState>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let last_value_received = Rc::new(Cell::new(Instant::now()));
         let stop_fun = future::poll_fn(|_cx| {
-            if check_user_shutdown(&receiver) == true {
+            if app_state.lock().unwrap().should_quit {
                 Poll::Ready(LoopEndingError::Shutdown)
             } else if last_value_received.get().elapsed().as_secs()
                 > config.access.reconnect_timeout
@@ -150,7 +150,8 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         // Fetch data based on display mode configuration
-        let display_data = fetch_display_data(&config).await?;
+        let display_data =
+            fetch_display_data(&config.access, &config.output.display_mode, &None).await?;
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -201,44 +202,130 @@ pub mod tibber {
         }
     }
 
-    async fn fetch_display_data(
-        config: &Config,
-    ) -> Result<Option<(Vec<f64>, &'static str)>, Box<dyn std::error::Error>> {
-        match config.output.display_mode {
-            output::DisplayMode::Prices => match get_todays_energy_prices(&config.access).await {
-                Ok(prices) => Ok(Some((
-                    prices.into_iter().map(|p| p.total).collect(),
-                    "Energy Prices [EUR/kWh]",
-                ))),
-                Err(error) => {
-                    warn!(target: "tibberator.mainloop", "Failed to fetch today's energy prices: {:?}", error.to_string());
-                    Ok(None)
-                }
-            },
-            output::DisplayMode::Consumption => {
-                match get_todays_energy_consumption(&config.access).await {
-                    Ok(consumption) => Ok(Some((
-                        consumption.into_iter().map(|c| c.consumption).collect(),
-                        "Energy Consumption [kWh]",
-                    ))),
-                    Err(error) => {
-                        warn!(target: "tibberator.mainloop", "Failed to fetch today's energy consumption: {:?}", error.to_string());
-                        Ok(None)
-                    }
-                }
+    /// Checks if the cached bar graph data is expired based on the current display mode.
+    ///
+    /// This function examines the cache in `AppState` to determine whether the bar graph data
+    /// associated with the current display mode has expired. It compares the cached timestamp
+    /// with the current time and logs the expiration status for debugging purposes.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_state` - A reference to the application state containing the cache and display mode.
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - `true` if the cache is expired, otherwise `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use tibberator::tibber::tui::AppState;
+    /// use tibberator::tibber::cache_expired;
+
+    /// let app_state = AppState::default(); // Assume this initializes with appropriate values
+    /// let is_expired = cache_expired(&app_state);
+    /// println!("Cache expired: {}", is_expired);
+    /// ```
+    pub fn cache_expired(app_state: &AppState) -> bool {
+        app_state
+            .cached_bar_graph
+            .get(&app_state.display_mode)
+            .map_or(true, |(_, _, timestamp)| {
+                let now = Local::now().fixed_offset();
+                let expired = now > *timestamp;
+                debug!(
+                    target: "tibberator.cache",
+                    "Cache {} expired for mode: {:?} (current timestamp: {} vs. now {})",
+                    if expired { "" } else { "not" },
+                    app_state.display_mode,
+                    *timestamp,
+                    now
+                );
+                expired
+            })
+    }
+
+    /// Fetches display data based on the specified display mode.
+    ///
+    /// # Arguments
+    /// * `access_config` - A reference to the access configuration for fetching data.
+    /// * `display_mode` - A reference to the display mode indicating what type of data to fetch (prices, consumption, or cost).
+    /// * `estimated_daily_fee` - An optional reference to the estimated daily fee used in cost calculations.
+    ///
+    /// # Returns
+    /// * `Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`
+    ///   - `Ok(Some((prices, consumption_data, timestamp)))` if data is successfully fetched and contains prices, consumption data, and a timestamp.
+    ///   - `Ok(None)` if no data is available.
+    ///   - `Err(e)` if an error occurs during the fetch operation.
+    ///
+    /// # Examples
+    /// ```
+    /// use tibberator::html_logger::LogConfig;
+    /// use tibberator::tibber::{output::{self, GuiMode, OutputConfig, OutputType}, AccessConfig, Config, fetch_display_data};
+    /// use chrono::FixedOffset;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let mut config = Config::default();
+    ///     let estimated_daily_fee = Some(10.5);
+    ///
+    ///     match fetch_display_data(&config.access, &config.output.display_mode, &estimated_daily_fee).await {
+    ///         Ok(Some((prices, consumption_data, timestamp))) => {
+    ///             println!("Prices: {:?}", prices);
+    ///             println!("Consumption Data: {:?}", consumption_data);
+    ///             println!("Timestamp: {:?}", timestamp);
+    ///         }
+    ///         Ok(None) => println!("No data available."),
+    ///         Err(e) => eprintln!("Error fetching display data: {}", e),
+    ///     }
+    /// }
+    /// ```
+    pub async fn fetch_display_data(
+        access_config: &AccessConfig,
+        display_mode: &DisplayMode,
+        estimated_daily_fee: &Option<f64>,
+    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+        match display_mode {
+            output::DisplayMode::Prices => get_prices_today(access_config).await,
+            output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
+            output::DisplayMode::Cost => {
+                get_cost_data_today(access_config, estimated_daily_fee).await
+            }
+            output::DisplayMode::CostLast30Days => {
+                get_cost_last_30_days(access_config, estimated_daily_fee).await
+            }
+            output::DisplayMode::CostLast12Months => {
+                get_cost_last_12_months(access_config, estimated_daily_fee).await
+            }
+            output::DisplayMode::AllYears => {
+                get_cost_all_years(access_config, estimated_daily_fee).await
             }
         }
     }
 
     #[cfg(test)]
     mod tests {
+        use std::collections::HashMap;
+
         use super::*;
-        use chrono::{DateTime, Duration, FixedOffset};
+        use chrono::{DateTime, Duration, FixedOffset, Timelike};
         use data_handling::connect_live_measurement;
         use output::OutputType;
         use serial_test::serial;
-        use std::sync::mpsc::channel;
         use tokio::time::{timeout, Duration as TokioDuration};
+
+        fn create_app_state() -> Arc<Mutex<AppState>> {
+            Arc::new(Mutex::new(AppState {
+                should_quit: false,
+                measurement: None,
+                price_info: None,
+                estimated_daily_fees: None,
+                cached_bar_graph: HashMap::new(),
+                display_mode: DisplayMode::Prices,
+                status: String::from("Waiting for data..."),
+                data_needs_refresh: false,
+            }))
+        }
 
         #[tokio::test]
         async fn test_update_price_after_one_hour() {
@@ -281,15 +368,17 @@ pub mod tibber {
         async fn test_loop_for_data() {
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (sender, receiver) = channel();
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver);
+            let result = loop_for_data(&config, subscription.as_mut(), app_state.clone());
             tokio::time::sleep(TokioDuration::from_secs(10)).await;
-            sender.send(true).unwrap();
+            app_state.lock().unwrap().should_quit = true;
             let result = timeout(std::time::Duration::from_secs(30), result).await;
             assert!(result.is_ok());
             assert!(result.unwrap().is_ok());
@@ -301,16 +390,18 @@ pub mod tibber {
         async fn test_loop_for_data_invalid_home_id() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
             config.access.home_id.pop();
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (_sender, receiver) = channel();
             let result = timeout(
                 std::time::Duration::from_secs(10),
-                loop_for_data(&config, subscription.as_mut(), &receiver),
+                loop_for_data(&config, subscription.as_mut(), app_state),
             )
             .await;
             assert!(result.is_ok());
@@ -328,14 +419,15 @@ pub mod tibber {
         async fn test_loop_for_data_connection_timeout() {
             let mut config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
             config.access.reconnect_timeout = 0;
             let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let app_state = create_app_state();
 
-            let (_sender, receiver) = channel();
-            let result = loop_for_data(&config, subscription.as_mut(), &receiver).await;
+            let result = loop_for_data(&config, subscription.as_mut(), app_state).await;
             assert!(result.as_ref().is_err());
             let error = result.err().unwrap();
             let error_type = error.downcast::<LoopEndingError>();
@@ -350,16 +442,18 @@ pub mod tibber {
             // Test Prices mode
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Prices),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Prices),
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config).await;
+            let result =
+                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
 
-            if let Some((prices, description)) = display_data {
+            if let Some((prices, description, _)) = display_data {
                 assert_eq!(prices.len(), 24);
                 assert_eq!(description, "Energy Prices [EUR/kWh]");
             }
@@ -367,19 +461,116 @@ pub mod tibber {
             // Test Consumption mode
             let config = Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent).with_display_mode(output::DisplayMode::Consumption),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Consumption),
                 logging: LogConfig::default(),
             };
 
-            let result = fetch_display_data(&config).await;
+            let result =
+                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
 
-            if let Some((consumption, description)) = display_data {
+            if let Some((consumption, description, _)) = display_data {
                 assert_eq!(consumption.len(), 24);
                 assert_eq!(description, "Energy Consumption [kWh]");
             }
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_fetch_display_data_cost_mode() {
+            // Test Cost mode
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Cost),
+                logging: LogConfig::default(),
+            };
+
+            let estimated_daily_fee = Some(24.0); // Example daily fee
+
+            let result = fetch_display_data(
+                &config.access,
+                &config.output.display_mode,
+                &estimated_daily_fee,
+            )
+            .await;
+            assert!(result.is_ok());
+            let display_data = result.unwrap();
+            assert!(display_data.is_some());
+
+            if let Some((costs, description, expiry_date)) = display_data {
+                assert_eq!(costs.len(), 24);
+                assert_eq!(description, "Cost Today [EUR]");
+                // Check if the cost for the current hour is not zero (since we have a daily fee)
+
+                let offset = if Local::now().minute() < 15 { 0 } else { 1 };
+                let current_hour = Local::now().hour();
+                let next_hour = Local::now()
+                    .date_naive()
+                    .and_hms_opt(current_hour, 15, 0)
+                    .unwrap()
+                    .and_local_timezone(Local)
+                    .unwrap()
+                    .fixed_offset()
+                    + chrono::Duration::hours(offset);
+
+                assert!(next_hour == expiry_date);
+
+                for i in 0..24 {
+                    if i < current_hour as usize {
+                        assert!(costs[i] > 0.0);
+                    } else {
+                        assert_eq!(costs[i], 0.0);
+                    }
+                }
+            }
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_no_cache() {
+            let app_state = create_app_state();
+            assert!(cache_expired(&app_state.lock().unwrap()));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_cache_not_expired() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            let timestamp = Local::now().fixed_offset() + chrono::Duration::minutes(1);
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(!cache_expired(&state));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_cache_expired() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            let timestamp = Local::now().fixed_offset() - chrono::Duration::hours(1);
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(cache_expired(&state));
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_different_display_mode() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            state.display_mode = DisplayMode::Consumption;
+            let timestamp = Local::now().fixed_offset();
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(cache_expired(&state));
         }
     }
 }
