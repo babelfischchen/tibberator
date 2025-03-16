@@ -292,6 +292,9 @@ pub mod tibber {
             output::DisplayMode::CostLast30Days => {
                 get_cost_last_30_days(access_config, estimated_daily_fee).await
             }
+            output::DisplayMode::CostLast12Months => {
+                get_cost_last_12_months(access_config, estimated_daily_fee).await
+            }
         }
     }
 

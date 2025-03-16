@@ -82,14 +82,24 @@ struct ConsumptionHourlyPageInfo;
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
+    query_path = "tibber/consumption_page_info.graphql",
+    response_derives = "Debug"
+)]
+struct ConsumptionPageInfo;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    schema_path = "tibber/schema.json",
     query_path = "tibber/fee_estimation.graphql",
     response_derives = "Debug"
 )]
 struct FeeEstimation;
 
+#[derive(Debug)]
 enum EnergyResolution {
     Hourly,
     Daily,
+    Monthly,
 }
 
 impl EnergyResolution {
@@ -97,6 +107,15 @@ impl EnergyResolution {
         match self {
             EnergyResolution::Hourly => consumption::EnergyResolution::HOURLY,
             EnergyResolution::Daily => consumption::EnergyResolution::DAILY,
+            EnergyResolution::Monthly => consumption::EnergyResolution::MONTHLY,
+        }
+    }
+
+    fn to_consumption_page_info_resolution(&self) -> consumption_page_info::EnergyResolution {
+        match self {
+            EnergyResolution::Hourly => consumption_page_info::EnergyResolution::HOURLY,
+            EnergyResolution::Daily => consumption_page_info::EnergyResolution::DAILY,
+            EnergyResolution::Monthly => consumption_page_info::EnergyResolution::MONTHLY,
         }
     }
 }
@@ -305,6 +324,61 @@ impl PriceLevel {
     }
 }
 
+trait ConsumptionPageInfoFields {
+    fn start_cursor(&self) -> String;
+    fn has_previous_page(&self) -> bool;
+    fn count(&self) -> usize;
+    fn total_cost(&self) -> Option<f64>;
+    fn total_consumption(&self) -> Option<f64>;
+    fn currency(&self) -> Option<String>;
+}
+
+impl ConsumptionPageInfoFields
+    for consumption_page_info::ConsumptionPageInfoViewerHomeConsumptionPageInfo
+{
+    fn start_cursor(&self) -> String {
+        self.start_cursor.clone().unwrap()
+    }
+    fn has_previous_page(&self) -> bool {
+        self.has_previous_page.unwrap()
+    }
+    fn count(&self) -> usize {
+        self.count.unwrap() as usize
+    }
+    fn total_cost(&self) -> Option<f64> {
+        self.total_cost
+    }
+    fn total_consumption(&self) -> Option<f64> {
+        self.total_consumption
+    }
+    fn currency(&self) -> Option<String> {
+        self.currency.clone()
+    }
+}
+
+impl ConsumptionPageInfoFields
+    for consumption_hourly_page_info::ConsumptionHourlyPageInfoViewerHomeConsumptionPageInfo
+{
+    fn start_cursor(&self) -> String {
+        self.start_cursor.clone().unwrap()
+    }
+    fn has_previous_page(&self) -> bool {
+        self.has_previous_page.unwrap()
+    }
+    fn count(&self) -> usize {
+        self.count.unwrap() as usize
+    }
+    fn total_cost(&self) -> Option<f64> {
+        self.total_cost
+    }
+    fn total_consumption(&self) -> Option<f64> {
+        self.total_consumption
+    }
+    fn currency(&self) -> Option<String> {
+        self.currency.clone()
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConsumptionPage {
     pub start_cursor: String,
@@ -316,15 +390,13 @@ pub struct ConsumptionPage {
 }
 
 impl ConsumptionPage {
-    pub fn create_from(
-        consumption_page: &consumption_hourly_page_info::ConsumptionHourlyPageInfoViewerHomeConsumptionPageInfo,
-    ) -> Option<ConsumptionPage> {
-        let start_cursor = String::from(consumption_page.start_cursor.clone()?);
-        let has_previous_page = consumption_page.has_previous_page?;
-        let count = consumption_page.count? as usize;
-        let total_cost = consumption_page.total_cost?;
-        let total_consumption = consumption_page.total_consumption?;
-        let currency = String::from(consumption_page.currency.clone()?);
+    fn create_from(consumption_page: &impl ConsumptionPageInfoFields) -> Option<ConsumptionPage> {
+        let start_cursor = String::from(consumption_page.start_cursor());
+        let has_previous_page = consumption_page.has_previous_page();
+        let count = consumption_page.count();
+        let total_cost = consumption_page.total_cost()?;
+        let total_consumption = consumption_page.total_consumption()?;
+        let currency = String::from(consumption_page.currency()?);
 
         Some(ConsumptionPage {
             start_cursor,
@@ -868,14 +940,14 @@ async fn get_todays_energy_consumption(
     ConsumptionNode::new_nodes_today(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
 }
 
-async fn get_last_30_days_energy_consumption(
+async fn get_last_n_days_energy_consumption(
     config: &AccessConfig,
+    n: i64,
 ) -> Result<Vec<ConsumptionNode>, Box<dyn std::error::Error>> {
     info!(target: "tibberator.consumption", "Fetching last 30 days energy consumption.");
 
     let id = config.home_id.to_owned();
     let res = EnergyResolution::Daily.to_consumption_resolution();
-    let n = 30;
     let variables = consumption::Variables { id, res, n };
     let consumption_data_response = timeout(
         tokio::time::Duration::from_secs(10),
@@ -894,6 +966,51 @@ async fn get_last_30_days_energy_consumption(
     info!(target: "tibberator.consumption", "Received daily consumption data");
 
     ConsumptionNode::new_nodes(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
+}
+
+/// Fetches the consumption page information for the last `n` data points at the specified energy resolution.
+///
+/// # Arguments
+///
+/// * `access_config` - A reference to the access configuration containing home ID and other necessary details.
+/// * `n` - The number of data points to fetch.
+/// * `energy_resolution` - The resolution (e.g., hourly, daily) at which the consumption data should be fetched.
+///
+/// # Returns
+///
+/// A `Result` containing the fetched `ConsumptionPage` if successful, or a boxed error if an issue occurs during the fetching process.
+///
+async fn get_consumption_page_info(
+    access_config: &AccessConfig,
+    n: i64,
+    cursor: Option<String>,
+    energy_resolution: EnergyResolution,
+) -> Result<ConsumptionPage, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.page_info", "Fetching page info for the last {} {:?} data.", n, energy_resolution);
+
+    let id = access_config.home_id.to_owned();
+    let variables = consumption_page_info::Variables {
+        id,
+        res: energy_resolution.to_consumption_page_info_resolution(),
+        cursor,
+        n,
+    };
+    let consumption_page_info_data_response = timeout(
+        tokio::time::Duration::from_secs(10),
+        fetch_data::<ConsumptionPageInfo>(access_config, variables),
+    )
+    .await?;
+
+    let consumption_page_data = consumption_page_info_data_response?
+        .data
+        .ok_or(LoopEndingError::InvalidData)?
+        .viewer
+        .home
+        .consumption
+        .ok_or(LoopEndingError::InvalidData)?
+        .page_info;
+
+    ConsumptionPage::create_from(&consumption_page_data).ok_or(LoopEndingError::InvalidData.into())
 }
 
 /// Fetches the energy consumption data for today.
@@ -970,7 +1087,7 @@ pub async fn get_cost_last_30_days(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
 ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
-    match get_last_30_days_energy_consumption(&access_config).await {
+    match get_last_n_days_energy_consumption(&access_config, 30).await {
         Ok(consumption) => {
             let time = consumption.last().ok_or(LoopEndingError::InvalidData)?.to
                 + chrono::Duration::days(1);
@@ -994,6 +1111,104 @@ pub async fn get_cost_last_30_days(
             Ok(None)
         }
     }
+}
+
+/// Retrieves the cost of electricity consumption over the last 12 months.
+///
+/// This function fetches the monthly consumption data for the past 11 months and then calculates
+/// the estimated cost for the current month based on the number of days that have passed. It combines these
+/// values to provide a comprehensive cost overview for the last 12 months.
+///
+/// # Arguments
+///
+/// * `access_config` - A reference to the access configuration used to authenticate API requests.
+/// * `estimated_daily_fee` - An optional estimate of the daily electricity fee, which is used to calculate
+///   the cost for the current month if not already provided in the consumption data.
+///
+/// # Returns
+///
+/// A `Result` containing a tuple with:
+/// - A vector of floating-point numbers representing the monthly costs.
+/// - A string describing the type of data (e.g., "Monthly Cost [EUR]").
+/// - A `DateTime<FixedOffset>` indicating the time at which the data was fetched, adjusted to UTC and rounded down to the nearest day.
+///
+/// # Errors
+///
+/// Returns an error if there are issues fetching the consumption data or processing the results.
+///
+/// # Examples
+///
+/// ```
+/// use tibberator::tibber::AccessConfig;
+/// use tibberator::tibber::get_cost_last_12_months;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let access_config = AccessConfig::default();
+///     let estimated_daily_fee: Option<f64> = Some(0.15); // Example daily fee in EUR
+///
+///     match get_cost_last_12_months(&access_config, &estimated_daily_fee).await {
+///         Ok(Some((costs, description, time))) => {
+///             println!("Monthly Costs: {:?}", costs);
+///             println!("Description: {}", description);
+///             println!("Fetched at: {}", time.to_rfc3339());
+///         },
+///         Ok(None) => println!("No data found"),
+///         Err(e) => eprintln!("Error: {}", e),
+///     }
+/// }
+/// ```
+pub async fn get_cost_last_12_months(
+    access_config: &AccessConfig,
+    estimated_daily_fee: &Option<f64>,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    // Get the last 11 months consumption data
+
+    let mut cursor = None;
+    let mut monthly_nodes = Vec::new();
+    for _month in 0..=11 {
+        let page_info = get_consumption_page_info(
+            access_config,
+            1,
+            cursor,
+            EnergyResolution::Monthly,
+        )
+        .await?;
+        cursor = Some(page_info.start_cursor);
+        monthly_nodes.push(page_info.total_cost);
+    }
+    monthly_nodes.reverse();
+
+    // Calculate the number of days that have passed in the current month
+    let days_passed_in_current_month = (Utc::now().day() - 1) as i64;
+
+    // Fetch the daily consumption data for the days that have passed in the current month
+    let daily_consumption_data = get_consumption_page_info(
+        access_config,
+        days_passed_in_current_month,
+        Some(String::from("")),
+        EnergyResolution::Daily,
+    )
+    .await?;
+
+    monthly_nodes.push(
+        daily_consumption_data.total_cost
+            + days_passed_in_current_month as f64 * estimated_daily_fee.unwrap_or(0.0),
+    );
+    let time = Local::now()
+        .with_hour(0)
+        .and_then(|t| t.with_minute(0))
+        .and_then(|t| t.with_second(0))
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(Local::now())
+        .fixed_offset()
+        + chrono::Duration::days(1);
+
+    Ok(Some((
+        monthly_nodes,
+        String::from("Monthly Cost [EUR]"),
+        time,
+    )))
 }
 
 /// Fetches the current day's energy prices from Tibber API.

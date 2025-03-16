@@ -306,6 +306,15 @@ fn draw_main_content(frame: &mut Frame, app_state: &AppState, area: Rect) {
     frame.render_widget(price_paragraph, main_chunks[1]);
 }
 
+fn create_month_string(month: usize) -> String {
+    // create a month string (Jan, Feb, ...) from the month number
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    if month < 1 || month > 12 {
+        return String::from("Invalid month");
+    }
+    return String::from(months[month - 1]);
+}
+
 fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
     let right_now = Local::now();
     let current_hour = right_now.hour() as usize;
@@ -338,7 +347,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
                 }
                 TimeInterval::Last12Months => {
                     // For Last12Months: index 0 = 11 months ago, index 11 = current month
-                    let months_ago = 11 - index as i32;
+                    let months_ago = 12 - index as i32;
 
                     // Calculate the date by going back months_ago months
                     let mut month = current_date.month() as i32 - months_ago;
@@ -349,7 +358,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
                     }
 
                     // Format only the month number
-                    format!("{:02}", month)
+                    create_month_string((month) as usize)
                 }
                 TimeInterval::Years => {
                     let year = current_date.year() - index as i32;
@@ -360,7 +369,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
             let is_highlighted = match interval {
                 TimeInterval::Hourly => index == current_hour,
                 TimeInterval::Last30Days => index == 30, // one beyond last entry, no highlight
-                TimeInterval::Last12Months => index == 11, // Highlight the current month
+                TimeInterval::Last12Months => index == 12, // Highlight the current month
                 TimeInterval::Years => index == data.len() - 1, // Highlight the current year
             };
 
@@ -393,6 +402,7 @@ fn get_time_interval(app_state: &AppState) -> TimeInterval {
         DisplayMode::Consumption => TimeInterval::Hourly,
         DisplayMode::Cost => TimeInterval::Hourly,
         DisplayMode::CostLast30Days => TimeInterval::Last30Days,
+        DisplayMode::CostLast12Months => TimeInterval::Last12Months,
     }
 }
 
@@ -403,6 +413,7 @@ fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
 
         let time_interval = get_time_interval(app_state);
         let bar_width = match time_interval {
+            TimeInterval::Last12Months => 11,
             _ => 4,
         };
 

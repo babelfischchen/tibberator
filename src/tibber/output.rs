@@ -40,24 +40,27 @@ pub enum DisplayMode {
     Consumption,
     Cost,
     CostLast30Days,
+    CostLast12Months,
 }
 
 impl DisplayMode {
     pub fn next(&self) -> DisplayMode {
-        match self {
+        match *self {
             DisplayMode::Prices => DisplayMode::Consumption,
             DisplayMode::Consumption => DisplayMode::Cost,
             DisplayMode::Cost => DisplayMode::CostLast30Days,
-            DisplayMode::CostLast30Days => DisplayMode::Prices,
+            DisplayMode::CostLast30Days => DisplayMode::CostLast12Months,
+            DisplayMode::CostLast12Months => DisplayMode::Prices,
         }
     }
 
     pub fn prev(&self) -> DisplayMode {
-        match self {
-            DisplayMode::Prices => DisplayMode::CostLast30Days,
+        match *self {
+            DisplayMode::Prices => DisplayMode::CostLast12Months,
             DisplayMode::Consumption => DisplayMode::Prices,
             DisplayMode::Cost => DisplayMode::Consumption,
             DisplayMode::CostLast30Days => DisplayMode::Cost,
+            DisplayMode::CostLast12Months => DisplayMode::CostLast30Days,
         }
     }
 }
