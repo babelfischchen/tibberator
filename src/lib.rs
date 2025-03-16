@@ -503,7 +503,7 @@ pub mod tibber {
 
             if let Some((costs, description, expiry_date)) = display_data {
                 assert_eq!(costs.len(), 24);
-                assert_eq!(description, "Cost [EUR]");
+                assert_eq!(description, "Cost Today [EUR]");
                 // Check if the cost for the current hour is not zero (since we have a daily fee)
                 let current_hour = Local::now().hour();
                 let next_hour = Local::now()
