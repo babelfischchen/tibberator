@@ -32,7 +32,7 @@ Tibberator is a Rust application that connects to the Tibber API and provides ba
 
 - `--token <access_token>`: Provides the user's access token for personalized data retrieval.
 - `--home_id <home_id>`: Specifies the user's home ID.
-- `-d` or `--dislay <display_mode`: Defines how Tibberator should display the data (possible values "consumption" or "prices").
+- `-d` or `--dislay <display_mode>`: Defines how Tibberator should display the data (possible values "consumption" or "prices").
 
 
 Remember to replace `<access_token>` and `<home_id>` with actual values when using Tibberator.
