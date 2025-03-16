@@ -308,7 +308,9 @@ fn draw_main_content(frame: &mut Frame, app_state: &AppState, area: Rect) {
 
 fn create_month_string(month: usize) -> String {
     // create a month string (Jan, Feb, ...) from the month number
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     if month < 1 || month > 12 {
         return String::from("Invalid month");
     }
@@ -361,7 +363,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
                     create_month_string((month) as usize)
                 }
                 TimeInterval::Years => {
-                    let year = current_date.year() - index as i32;
+                    let year = current_date.year() - data.len() as i32 + index as i32 + 1;
                     format!("{}", year)
                 }
             };
@@ -403,6 +405,7 @@ fn get_time_interval(app_state: &AppState) -> TimeInterval {
         DisplayMode::Cost => TimeInterval::Hourly,
         DisplayMode::CostLast30Days => TimeInterval::Last30Days,
         DisplayMode::CostLast12Months => TimeInterval::Last12Months,
+        DisplayMode::AllYears => TimeInterval::Years,
     }
 }
 
@@ -410,22 +413,61 @@ fn get_time_interval(app_state: &AppState) -> TimeInterval {
 fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
     if let Some((data, label, _)) = app_state.cached_bar_graph.get(&app_state.display_mode) {
         let bar_block = Block::default().title(label.clone()).borders(Borders::ALL);
+        let inner_area = bar_block.inner(area);
 
         let time_interval = get_time_interval(app_state);
-        let bar_width = match time_interval {
+        let max_bar_width = match time_interval {
+            TimeInterval::Years => 16,
             TimeInterval::Last12Months => 11,
-            _ => 4,
+            TimeInterval::Last30Days => 4,
+            TimeInterval::Hourly => 6,
+        };
+
+        // Calculate the optimal bar width to fit in the available space
+        let bar_data: Vec<Bar> = create_bar_data(data, time_interval);
+        let num_bars = bar_data.len();
+        let bar_gap = 1;
+        let available_width = inner_area.width as usize;
+
+        // Calculate optimal bar width
+        // For n bars, we need space for n bars and (n-1) gaps
+        // So: n*bar_width + (n-1)*bar_gap <= available_width
+        // Solving for bar_width: bar_width <= (available_width - (n-1)*bar_gap) / n
+        let optimal_bar_width = if num_bars > 0 {
+            let width = (available_width - ((num_bars - 1) * bar_gap)) / num_bars;
+            width.min(max_bar_width).max(1) as u16
+        } else {
+            max_bar_width as u16
         };
 
         // Create bar data in format (&str, u64)
-        let bar_data: Vec<Bar> = create_bar_data(data, time_interval);
         let chart = BarChart::default()
-            .block(bar_block)
-            .bar_width(bar_width)
-            .bar_gap(1)
+            .bar_width(optimal_bar_width)
+            .bar_gap(bar_gap as u16)
             .data(BarGroup::default().bars(&bar_data));
 
-        frame.render_widget(chart, area);
+        frame.render_widget(bar_block, area);
+
+        // Total chart width including some padding for better readability
+        let total_width = data.len() * (optimal_bar_width as usize + bar_gap) as usize + 2;
+
+        // Create a centered layout for the chart if it's smaller than the available space
+        if total_width < available_width {
+            let centered_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length((inner_area.width - total_width as u16) / 2),
+                    Constraint::Length(total_width as u16),
+                    Constraint::Min(0),
+                ])
+                .split(inner_area);
+
+            // Render the chart in the centered area
+            frame.render_widget(chart, centered_layout[1]);
+        } else {
+            // If the chart is wider than the available space, render it normally
+            frame.render_widget(chart, inner_area);
+        }
     } else {
         // If no data is available, show a message
         let block = Block::default()

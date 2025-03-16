@@ -288,12 +288,17 @@ pub mod tibber {
         match display_mode {
             output::DisplayMode::Prices => get_prices_today(access_config).await,
             output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
-            output::DisplayMode::Cost => get_cost_data(access_config, estimated_daily_fee).await,
+            output::DisplayMode::Cost => {
+                get_cost_data_today(access_config, estimated_daily_fee).await
+            }
             output::DisplayMode::CostLast30Days => {
                 get_cost_last_30_days(access_config, estimated_daily_fee).await
             }
             output::DisplayMode::CostLast12Months => {
                 get_cost_last_12_months(access_config, estimated_daily_fee).await
+            }
+            output::DisplayMode::AllYears => {
+                get_cost_all_years(access_config, estimated_daily_fee).await
             }
         }
     }

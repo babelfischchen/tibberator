@@ -100,6 +100,7 @@ enum EnergyResolution {
     Hourly,
     Daily,
     Monthly,
+    Yearly,
 }
 
 impl EnergyResolution {
@@ -108,6 +109,7 @@ impl EnergyResolution {
             EnergyResolution::Hourly => consumption::EnergyResolution::HOURLY,
             EnergyResolution::Daily => consumption::EnergyResolution::DAILY,
             EnergyResolution::Monthly => consumption::EnergyResolution::MONTHLY,
+            EnergyResolution::Yearly => consumption::EnergyResolution::ANNUAL,
         }
     }
 
@@ -116,6 +118,7 @@ impl EnergyResolution {
             EnergyResolution::Hourly => consumption_page_info::EnergyResolution::HOURLY,
             EnergyResolution::Daily => consumption_page_info::EnergyResolution::DAILY,
             EnergyResolution::Monthly => consumption_page_info::EnergyResolution::MONTHLY,
+            EnergyResolution::Yearly => consumption_page_info::EnergyResolution::ANNUAL,
         }
     }
 }
@@ -325,7 +328,7 @@ impl PriceLevel {
 }
 
 trait ConsumptionPageInfoFields {
-    fn start_cursor(&self) -> String;
+    fn start_cursor(&self) -> Option<String>;
     fn has_previous_page(&self) -> bool;
     fn count(&self) -> usize;
     fn total_cost(&self) -> Option<f64>;
@@ -336,8 +339,8 @@ trait ConsumptionPageInfoFields {
 impl ConsumptionPageInfoFields
     for consumption_page_info::ConsumptionPageInfoViewerHomeConsumptionPageInfo
 {
-    fn start_cursor(&self) -> String {
-        self.start_cursor.clone().unwrap()
+    fn start_cursor(&self) -> Option<String> {
+        self.start_cursor.clone()
     }
     fn has_previous_page(&self) -> bool {
         self.has_previous_page.unwrap()
@@ -359,8 +362,8 @@ impl ConsumptionPageInfoFields
 impl ConsumptionPageInfoFields
     for consumption_hourly_page_info::ConsumptionHourlyPageInfoViewerHomeConsumptionPageInfo
 {
-    fn start_cursor(&self) -> String {
-        self.start_cursor.clone().unwrap()
+    fn start_cursor(&self) -> Option<String> {
+        self.start_cursor.clone()
     }
     fn has_previous_page(&self) -> bool {
         self.has_previous_page.unwrap()
@@ -391,7 +394,7 @@ pub struct ConsumptionPage {
 
 impl ConsumptionPage {
     fn create_from(consumption_page: &impl ConsumptionPageInfoFields) -> Option<ConsumptionPage> {
-        let start_cursor = String::from(consumption_page.start_cursor());
+        let start_cursor = consumption_page.start_cursor().unwrap_or_default();
         let has_previous_page = consumption_page.has_previous_page();
         let count = consumption_page.count();
         let total_cost = consumption_page.total_cost()?;
@@ -940,6 +943,17 @@ async fn get_todays_energy_consumption(
     ConsumptionNode::new_nodes_today(consumption_data).ok_or(Box::new(LoopEndingError::InvalidData))
 }
 
+/// Fetches the energy consumption data for the last `n` days.
+///
+/// # Arguments
+///
+/// * `config` - A reference to the access configuration containing necessary details like home ID.
+/// * `n` - The number of days' worth of consumption data to fetch.
+///
+/// # Returns
+///
+/// A `Result` containing a vector of `ConsumptionNode` if successful, or an error wrapped in a `Box<dyn std::error::Error>` if the request fails or the data is invalid.
+///
 async fn get_last_n_days_energy_consumption(
     config: &AccessConfig,
     n: i64,
@@ -1107,7 +1121,7 @@ pub async fn get_cost_last_30_days(
             )))
         }
         Err(error) => {
-            warn!(target: "tibberator.mainloop", "Failed to fetch last 30 days energy consumption: {:?}", error.to_string());
+            warn!(target: "tibberator.consumption", "Failed to fetch last 30 days energy consumption: {:?}", error.to_string());
             Ok(None)
         }
     }
@@ -1167,13 +1181,8 @@ pub async fn get_cost_last_12_months(
     let mut cursor = None;
     let mut monthly_nodes = Vec::new();
     for _month in 0..=11 {
-        let page_info = get_consumption_page_info(
-            access_config,
-            1,
-            cursor,
-            EnergyResolution::Monthly,
-        )
-        .await?;
+        let page_info =
+            get_consumption_page_info(access_config, 1, cursor, EnergyResolution::Monthly).await?;
         cursor = Some(page_info.start_cursor);
         monthly_nodes.push(page_info.total_cost);
     }
@@ -1207,6 +1216,101 @@ pub async fn get_cost_last_12_months(
     Ok(Some((
         monthly_nodes,
         String::from("Monthly Cost [EUR]"),
+        time,
+    )))
+}
+
+/// Retrieves the cost data for all years, including an estimate for the current year based on daily consumption.
+///
+/// This function fetches consumption data in yearly resolution and calculates the total cost for each year.
+/// For the current year, it also considers the estimated daily fee to provide a more accurate estimate.
+///
+/// # Arguments
+/// * `access_config` - A reference to the AccessConfig struct containing configuration settings.
+/// * `estimated_daily_fee` - An optional reference to a floating-point number representing the estimated daily cost.
+///
+/// # Returns
+/// A Result containing an Option with a tuple of:
+/// - A vector of f64 representing the yearly costs.
+/// - A String describing the type of data (e.g., "Yearly Cost [EUR]").
+/// - A DateTime<FixedOffset> representing the time when the data was last updated.
+///
+/// # Errors
+/// This function returns an error if the HTTP request fails or if the response cannot be parsed.
+///
+/// # Example
+/// ```rust
+/// use tibberator::tibber::{get_cost_all_years, AccessConfig};
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let config = AccessConfig::default();
+///     let estimated_fee = Some(10.5); // Example estimated daily fee
+///
+///     match get_cost_all_years(&config, &estimated_fee).await {
+///         Ok(Some((yearly_costs, description, time))) => {
+///             println!("Yearly Costs: {:?}", yearly_costs);
+///             println!("Description: {}", description);
+///             println!("Last Updated: {}", time);
+///         }
+///         Ok(None) => println!("No data available."),
+///         Err(e) => eprintln!("Error retrieving cost all years: {}", e),
+///     }
+/// }
+/// ```
+pub async fn get_cost_all_years(
+    access_config: &AccessConfig,
+    estimated_daily_fee: &Option<f64>,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    info!(target: "tibberator.consumption", "Retrieving cost all years...");
+
+    let mut cursor = None;
+    let mut yearly_nodes = Vec::new();
+    let mut has_previous_page = true;
+
+    while has_previous_page {
+        let page_info =
+            get_consumption_page_info(access_config, 1, cursor, EnergyResolution::Yearly).await?;
+
+        cursor = Some(page_info.start_cursor);
+        let count = page_info.count;
+
+        if count == 0 && cursor.as_ref().unwrap().is_empty() && !page_info.has_previous_page {
+            break;
+        }
+
+        yearly_nodes.push(page_info.total_cost);
+        has_previous_page = page_info.has_previous_page;
+    }
+    yearly_nodes.reverse();
+
+    // Fetch the cost for the last 12 months
+    let monthly_data = get_cost_last_12_months(access_config, estimated_daily_fee).await?;
+
+    if let Some((monthly_costs, _, _)) = monthly_data {
+        let current_month = Local::now().month() as usize;
+
+        // Sum the appropriate number of monthly costs based on the current month
+        let mut total_cost_for_current_year = 0.0;
+        for i in (monthly_costs.len() - current_month)..monthly_costs.len() {
+            total_cost_for_current_year += monthly_costs[i];
+        }
+
+        yearly_nodes.push(total_cost_for_current_year);
+    }
+
+    let time = Local::now()
+        .with_hour(0)
+        .and_then(|t| t.with_minute(0))
+        .and_then(|t| t.with_second(0))
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(Local::now())
+        .fixed_offset()
+        + chrono::Duration::days(1);
+
+    Ok(Some((
+        yearly_nodes,
+        String::from("Yearly Cost [EUR]"),
         time,
     )))
 }
@@ -1388,20 +1492,20 @@ async fn get_last_consumption_pages(
 ///
 /// # Examples
 /// ```
-/// use tibberator::tibber::{AccessConfig, get_cost_data};
+/// use tibberator::tibber::{AccessConfig, get_cost_data_today};
 ///
 /// # #[tokio::main]
 /// # async fn main() {
 ///     let access_config = AccessConfig::default();
 ///     let estimated_daily_fee = Some(0.5);
-///     match get_cost_data(&access_config, &estimated_daily_fee).await {
+///     match get_cost_data_today(&access_config, &estimated_daily_fee).await {
 ///         Ok(Some((costs, description, last_data_time))) => println!("Cost Data: {:?}", costs),
 ///         Ok(None) => println!("No data found."),
 ///         Err(e) => eprintln!("Error fetching cost data: {}", e),
 ///     }
 /// }
 /// ```
-pub async fn get_cost_data(
+pub async fn get_cost_data_today(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
 ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
@@ -1433,7 +1537,7 @@ pub async fn get_cost_data(
         return Ok(None);
     }
 
-    let description_string = String::from("Cost [EUR]");
+    let description_string = String::from("Cost Today [EUR]");
     for _i in 0..(24 - current_hour) {
         pages_so_far.push(0.0);
     }
@@ -1840,5 +1944,25 @@ mod tests {
         assert!(estimated_fee.is_some());
 
         assert!(estimated_fee.unwrap() >= 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_get_cost_all_years() {
+        let config = AccessConfig::default();
+        let estimated_daily_fee = None; // You can set this to an actual value if needed
+
+        let result = get_cost_all_years(&config, &estimated_daily_fee).await;
+        assert!(result.is_ok());
+
+        let (yearly_nodes, description, time) = result.unwrap().unwrap();
+        assert_eq!(description, "Yearly Cost [EUR]");
+
+        let reference_time = Local::now()
+            .with_day(1)
+            .and_then(|t| t.with_month(1))
+            .unwrap()
+            .fixed_offset();
+        assert!(time > reference_time, "Time should not be zero");
+        assert!(!yearly_nodes.is_empty());
     }
 }

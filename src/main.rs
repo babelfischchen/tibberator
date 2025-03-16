@@ -499,6 +499,15 @@ async fn subscription_loop_tui(
                     }
                     Ok(None) => {
                         info!(target: "tibberator.mainloop", "No display data available");
+                        let data_vector = Vec::new();
+                        state.cached_bar_graph.insert(
+                            current_display_mode,
+                            (
+                                data_vector,
+                                String::from("No data available"),
+                                Local::now().fixed_offset() + chrono::Duration::days(1),
+                            ),
+                        );
                     }
                     Err(err) => {
                         error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
