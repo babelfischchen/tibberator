@@ -1745,7 +1745,7 @@ pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementS
 mod tests {
     use super::*;
     use serial_test::serial;
-    use tokio::time::timeout;
+    use tokio::time::{timeout, Duration as TokioDuration};
 
     #[tokio::test]
     async fn test_fetch_data() {
@@ -1856,6 +1856,7 @@ mod tests {
     async fn test_get_todays_energy_consumption() {
         let config = AccessConfig::default();
 
+        tokio::time::sleep(TokioDuration::from_secs(10)).await;
         let result = get_todays_energy_consumption(&config).await;
         assert!(result.is_ok());
 
@@ -1886,6 +1887,7 @@ mod tests {
     async fn test_get_consumption_page() {
         let config = AccessConfig::default();
 
+        tokio::time::sleep(TokioDuration::from_secs(15)).await;
         let result = get_consumption_page(&config, &String::from("")).await;
         assert!(result.is_ok());
 
@@ -1903,6 +1905,7 @@ mod tests {
         use std::collections::HashSet;
 
         let config = AccessConfig::default();
+        tokio::time::sleep(TokioDuration::from_secs(20)).await;
         let mut result = get_consumption_page(&config, &String::from("")).await;
         assert!(result.is_ok());
 
@@ -1951,6 +1954,7 @@ mod tests {
         let config = AccessConfig::default();
         let estimated_daily_fee = None; // You can set this to an actual value if needed
 
+        tokio::time::sleep(TokioDuration::from_secs(25)).await;
         let result = get_cost_all_years(&config, &estimated_daily_fee).await;
         assert!(result.is_ok());
 

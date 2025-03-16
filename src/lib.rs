@@ -505,14 +505,17 @@ pub mod tibber {
                 assert_eq!(costs.len(), 24);
                 assert_eq!(description, "Cost Today [EUR]");
                 // Check if the cost for the current hour is not zero (since we have a daily fee)
+
+                let offset = if Local::now().minute() < 15 { 0 } else { 1 };
                 let current_hour = Local::now().hour();
                 let next_hour = Local::now()
                     .date_naive()
-                    .and_hms_opt(current_hour + 1, 0, 0)
+                    .and_hms_opt(current_hour, 15, 0)
                     .unwrap()
                     .and_local_timezone(Local)
                     .unwrap()
-                    .fixed_offset();
+                    .fixed_offset()
+                    + chrono::Duration::hours(offset);
 
                 assert!(next_hour == expiry_date);
 
