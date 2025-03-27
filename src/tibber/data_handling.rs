@@ -1610,7 +1610,7 @@ pub async fn estimate_daily_fees(
     match fee_estimation_data.page_info.total_cost {
         Some(cost) => {
             let daily_fee = (cost - price_excluding_fees) / days_last_month as f64;
-            info!(target: "tibberator.price", "Estimated daily fee: {} {}", cost, fee_estimation_data.page_info.currency.unwrap_or_default());
+            info!(target: "tibberator.price", "Estimated daily fee: {} {}", daily_fee, fee_estimation_data.page_info.currency.unwrap_or_default());
             Ok(Some(daily_fee))
         }
         None => {
