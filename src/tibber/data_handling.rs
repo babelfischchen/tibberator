@@ -15,7 +15,7 @@ use reqwest::{
     Client,
 };
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{collections::HashSet, str::FromStr};
 use thiserror::Error;
 use tokio::time::timeout;
 
@@ -291,6 +291,7 @@ impl PriceInfo {
     ) -> Option<Vec<PriceInfo>> {
         let mut price_infos = Vec::new();
 
+        // Collect all price info from API
         for hour in all_price_info.today {
             if let Some(current_hour) = hour {
                 if let Some(price_info) = Self::parse_price_info(&current_hour) {
@@ -299,7 +300,41 @@ impl PriceInfo {
             }
         }
 
-        Some(price_infos)
+        // Handle DST transitions
+        match price_infos.len() {
+            // DST start (23 hours) - add zero entry for missing hour
+            23 => {
+                let hours: HashSet<u32> = price_infos.iter().map(|p| p.starts_at.hour()).collect();
+
+                // Find missing hour (0-23)
+                let missing_hour = (0..24).find(|h| !hours.contains(h)).unwrap_or(0);
+                let timezone = Local;
+
+                // Create zero entry for missing hour
+                let currency = price_infos
+                    .first()
+                    .map(|p| p.currency.clone())
+                    .unwrap_or_default();
+                price_infos.push(PriceInfo {
+                    total: 0.0,
+                    energy: 0.0,
+                    tax: 0.0,
+                    starts_at: Local::now()
+                        .date_naive()
+                        .and_hms_opt(missing_hour, 0, 0)?
+                        .and_local_timezone(timezone.offset_from_utc_date(&Utc::now().date_naive()))
+                        .single()?,
+                    currency,
+                    level: PriceLevel::None,
+                });
+
+                // Sort by hour
+                price_infos.sort_by(|a, b| a.starts_at.hour().cmp(&b.starts_at.hour()));
+                Some(price_infos)
+            }
+            // Normal day (24 hours) and DST end (25 hours) - keep all entries
+            _ => Some(price_infos),
+        }
     }
 }
 
