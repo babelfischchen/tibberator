@@ -371,8 +371,8 @@ async fn handle_reconnect_tui(
 ) -> Result<LiveMeasurementSubscription, LoopEndingError> {
     // Stop the existing subscription
     subscription.stop().await.map_err(|error| {
-        eprintln!("{:?}", error);
-        std::process::exit(exitcode::PROTOCOL)
+        error!(target: "tibberator.app", "Could not correctly stop subscription: {:?}", error);
+        LoopEndingError::InvalidData
     })?;
 
     let base_delay = 10; // Base delay in seconds
