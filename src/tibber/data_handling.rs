@@ -1226,19 +1226,25 @@ pub async fn get_cost_last_12_months(
     // Calculate the number of days that have passed in the current month
     let days_passed_in_current_month = (Utc::now().day() - 1) as i64;
 
-    // Fetch the daily consumption data for the days that have passed in the current month
-    let daily_consumption_data = get_consumption_page_info(
-        access_config,
-        days_passed_in_current_month,
-        Some(String::from("")),
-        EnergyResolution::Daily,
-    )
-    .await?;
+    // If no days have passed in the current month, the cost is zero
+    let current_month_cost = if days_passed_in_current_month == 0 {
+        0.0
+    } else {
+        // Fetch the daily consumption data for the days that have passed in the current month
+        let daily_consumption_data = get_consumption_page_info(
+            access_config,
+            days_passed_in_current_month,
+            Some(String::from("")),
+            EnergyResolution::Daily,
+        )
+        .await?;
 
-    monthly_nodes.push(
         daily_consumption_data.total_cost
-            + days_passed_in_current_month as f64 * estimated_daily_fee.unwrap_or(0.0),
-    );
+            + days_passed_in_current_month as f64 * estimated_daily_fee.unwrap_or(0.0)
+    };
+
+    monthly_nodes.push(current_month_cost);
+
     let time = Local::now()
         .with_hour(0)
         .and_then(|t| t.with_minute(0))

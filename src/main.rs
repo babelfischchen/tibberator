@@ -239,7 +239,7 @@ async fn main() -> ExitCode {
 /// * `ArgMatches` - The parsed command-line arguments.
 fn get_matcher() -> ArgMatches {
     App::new("Tibberator")
-        .version("0.5.0")
+        .version("0.5.1")
         .author("Stephan Z. <https://github.com/babelfischchen>")
         .about(
             "Tibberator connects to the Tibber API and shows basic usage statistics for your home.
