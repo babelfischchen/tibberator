@@ -182,7 +182,7 @@ async fn main() -> ExitCode {
         });
 
     // Main event loop
-    while !app_state.lock().unwrap().should_quit {
+    while !app_state.lock().unwrap().should_quit && !subscription_handle.is_finished() {
         if config.output.gui_mode == output::GuiMode::Advanced {
             // Draw the UI
             terminal
@@ -369,11 +369,22 @@ async fn handle_reconnect_tui(
     subscription: Box<LiveMeasurementSubscription>,
     app_state: Arc<Mutex<AppState>>,
 ) -> Result<LiveMeasurementSubscription, LoopEndingError> {
-    // Stop the existing subscription
-    subscription.stop().await.map_err(|error| {
-        error!(target: "tibberator.app", "Could not correctly stop subscription: {:?}", error);
-        LoopEndingError::InvalidData
-    })?;
+    // Stop the existing subscription with error handling
+    match subscription.stop().await {
+        Ok(_) => (),
+        Err(error) => {
+            match error {
+                graphql_ws_client::Error::Send(err_string) => {
+                    // Channel is closed, subscription already stopped – proceed
+                    info!(target: "tibberator.app", "Subscription already stopped, proceeding to reconnect: {}", err_string);
+                }
+                _ => {
+                    error!(target: "tibberator.app", "Failed to stop subscription: {:?}", error);
+                    return Err(LoopEndingError::InvalidData);
+                }
+            }
+        }
+    };
 
     let base_delay = 10; // Base delay in seconds
     let max_jitter = 110; // Maximum jitter in seconds
@@ -601,7 +612,7 @@ fn create_data_handler(
 /// * A `Box` containing the error handling closure.
 fn create_error_handler(app_state: Arc<Mutex<AppState>>) -> Box<dyn Fn(&str)> {
     Box::new(move |error: &str| {
-        error!(target: "tibberator.mainloop", "Error fetching display data: {}", error);
+        error!(target: "tibberator.mainloop", "Error occured: {}", error);
         let mut state = app_state.lock().unwrap();
         state.status = format!("Error: {}", error);
     })
@@ -758,9 +769,14 @@ async fn poll_data(
     error_handler: &Box<dyn Fn(&str)>,
     reconnect_handler: &Box<dyn Fn()>,
     app_state: Arc<Mutex<AppState>>,
-) -> Result<Box<LiveMeasurementSubscription>, Box<dyn std::error::Error + Send + Sync>> { // Return the Box
-    let result =
-        process_subscription_data(subscription.as_mut(), poll_timeout, data_handler, error_handler).await; // Use as_mut()
+) -> Result<Box<LiveMeasurementSubscription>, Box<dyn std::error::Error + Send + Sync>> {
+    let result = process_subscription_data(
+        subscription.as_mut(),
+        poll_timeout,
+        data_handler,
+        error_handler,
+    )
+    .await;
 
     match result {
         Ok(Some(())) => {
@@ -772,7 +788,7 @@ async fn poll_data(
             // Stream ended normally, treat as reconnect scenario
             warn!(target: "tibberator.mainloop", "Subscription stream ended unexpectedly. Reconnecting...");
             reconnect_handler();
-            match handle_reconnect_tui(access_config, subscription, app_state.clone()).await { // Pass ownership
+            match handle_reconnect_tui(access_config, subscription, app_state.clone()).await {
                 Ok(new_subscription) => {
                     subscription = Box::new(new_subscription); // Assign back the new owned Box
                     *last_value_received = Instant::now();
@@ -794,7 +810,8 @@ async fn poll_data(
             // Invalid data received, trigger reconnect
             warn!(target: "tibberator.mainloop", "Invalid data received. Reconnecting...");
             reconnect_handler();
-            match handle_reconnect_tui(access_config, subscription, app_state.clone()).await { // Pass ownership
+            match handle_reconnect_tui(access_config, subscription, app_state.clone()).await {
+                // Pass ownership
                 Ok(new_subscription) => {
                     subscription = Box::new(new_subscription); // Assign back the new owned Box
                     *last_value_received = Instant::now();
