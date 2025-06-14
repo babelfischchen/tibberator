@@ -1,0 +1,1 @@
+aider --model openai/qwen3-14B --editor-model openai/qwen3-4B --weak-model openai/qwen3-0.6B --editor-edit-format diff --watch-files --architect

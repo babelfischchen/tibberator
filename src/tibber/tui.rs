@@ -51,6 +51,7 @@ impl Default for AppState {
 
 enum TimeInterval {
     Hourly,
+    HourlyNoHighlight,
     Last30Days,
     Last12Months,
     Years,
@@ -342,7 +343,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
                 .clamp(10.0, 100.0);
 
             let label_text = match interval {
-                TimeInterval::Hourly => format!("{:02}", index),
+                TimeInterval::Hourly | TimeInterval::HourlyNoHighlight => format!("{:02}", index),
                 TimeInterval::Last30Days => {
                     let date = current_date - chrono::Duration::days(30 - index as i64);
                     date.format("%d").to_string()
@@ -370,6 +371,7 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
 
             let is_highlighted = match interval {
                 TimeInterval::Hourly => index == current_hour,
+                TimeInterval::HourlyNoHighlight => index == 24, // one beyond last entry, no highlight
                 TimeInterval::Last30Days => index == 30, // one beyond last entry, no highlight
                 TimeInterval::Last12Months => index == 12, // Highlight the current month
                 TimeInterval::Years => index == data.len() - 1, // Highlight the current year
@@ -398,9 +400,10 @@ fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
         .collect()
 }
 
-fn get_time_interval(app_state: &AppState) -> TimeInterval {
-    match app_state.display_mode {
+fn get_time_interval(display_mode: &DisplayMode) -> TimeInterval {
+    match display_mode {
         DisplayMode::Prices => TimeInterval::Hourly,
+        DisplayMode::PricesTomorrow => TimeInterval::HourlyNoHighlight,
         DisplayMode::Consumption => TimeInterval::Hourly,
         DisplayMode::Cost => TimeInterval::Hourly,
         DisplayMode::CostLast30Days => TimeInterval::Last30Days,
@@ -415,12 +418,13 @@ fn draw_bar_graph(frame: &mut Frame, app_state: &AppState, area: Rect) {
         let bar_block = Block::default().title(label.clone()).borders(Borders::ALL);
         let inner_area = bar_block.inner(area);
 
-        let time_interval = get_time_interval(app_state);
+        let time_interval = get_time_interval(&app_state.display_mode);
         let max_bar_width = match time_interval {
             TimeInterval::Years => 16,
             TimeInterval::Last12Months => 11,
             TimeInterval::Last30Days => 4,
             TimeInterval::Hourly => 6,
+            TimeInterval::HourlyNoHighlight => 6,
         };
 
         // Calculate the optimal bar width to fit in the available space

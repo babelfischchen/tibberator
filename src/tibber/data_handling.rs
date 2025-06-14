@@ -191,6 +191,35 @@ impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionP
     }
 }
 
+impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoTomorrow {
+    fn total(&self) -> Option<f64> {
+        self.total
+    }
+    fn energy(&self) -> Option<f64> {
+        self.energy
+    }
+    fn tax(&self) -> Option<f64> {
+        self.tax
+    }
+    fn starts_at(&self) -> Option<String> {
+        self.starts_at.clone()
+    }
+    fn level(&self) -> PriceLevel {
+        match &self.level {
+            Some(price_hourly::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
+            Some(price_hourly::PriceLevel::CHEAP) => PriceLevel::Cheap,
+            Some(price_hourly::PriceLevel::NORMAL) => PriceLevel::Normal,
+            Some(price_hourly::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
+            Some(price_hourly::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
+            Some(price_hourly::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
+            _ => PriceLevel::None,
+        }
+    }
+    fn currency(&self) -> String {
+        self.currency.clone()
+    }
+}
+
 /// `LoopEndingError` is an enum that represents the different types of errors that can occur when a loop ends.
 /// It can be one of the following: `Shutdown`, `Reconnect`, or `InvalidData`.
 #[derive(Debug, Error, PartialEq)]
@@ -217,7 +246,7 @@ pub struct AccessConfig {
 impl Default for AccessConfig {
     fn default() -> Self {
         AccessConfig {
-            token: "5K4MVS-OjfWhK_4yrjOlFe1F6kJXPVf7eQYggo8ebAE".to_string(),
+            token: "3A77EECF61BD445F47241A5A36202185C35AF3AF58609E19B53F3A8872AD7BE1-1".to_string(),
             url: "https://api.tibber.com/v1-beta/gql".to_string(),
             home_id: "96a14971-525a-4420-aae9-e5aedaa129ff".to_string(),
             reconnect_timeout: 120,
@@ -286,27 +315,14 @@ impl PriceInfo {
         Self::parse_price_info(&price_info)
     }
 
-    fn new_hourly(
-        all_price_info: price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfo,
-    ) -> Option<Vec<PriceInfo>> {
-        let mut price_infos = Vec::new();
-
-        // Collect all price info from API
-        for hour in all_price_info.today {
-            if let Some(current_hour) = hour {
-                if let Some(price_info) = Self::parse_price_info(&current_hour) {
-                    price_infos.push(price_info);
-                }
-            }
-        }
-
+    fn handle_missing_entries(mut price_infos: Vec<PriceInfo>) -> Option<Vec<PriceInfo>> {
         // Handle DST transitions
         match price_infos.len() {
             // DST start (23 hours) - add zero entry for missing hour
             23 => {
                 let hours: HashSet<u32> = price_infos.iter().map(|p| p.starts_at.hour()).collect();
 
-                // Find missing hour (0-23)
+                // Find missing hour (0-24)
                 let missing_hour = (0..24).find(|h| !hours.contains(h)).unwrap_or(0);
                 let timezone = Local;
 
@@ -333,6 +349,45 @@ impl PriceInfo {
                 Some(price_infos)
             }
             // Normal day (24 hours) and DST end (25 hours) - keep all entries
+            _ => Some(price_infos),
+        }
+    }
+
+    fn new_hourly_today(
+        price_info_today: Vec<
+            Option<price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoToday>,
+        >,
+    ) -> Option<Vec<PriceInfo>> {
+        let mut price_infos = Vec::new();
+
+        for hour in price_info_today {
+            if let Some(current_hour) = hour {
+                if let Some(price_info) = Self::parse_price_info(&current_hour) {
+                    price_infos.push(price_info);
+                }
+            }
+        }
+
+        Self::handle_missing_entries(price_infos)
+    }
+
+    fn new_hourly_tomorrow(
+        price_info_tomorrow: Vec<
+            Option<price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoTomorrow>,
+        >,
+    ) -> Option<Vec<PriceInfo>> {
+        let mut price_infos = Vec::new();
+
+        for hour in price_info_tomorrow {
+            if let Some(current_hour) = hour {
+                if let Some(price_info) = Self::parse_price_info(&current_hour) {
+                    price_infos.push(price_info);
+                }
+            }
+        }
+
+        match price_infos.len() {
+            0 => None,
             _ => Some(price_infos),
         }
     }
@@ -898,8 +953,9 @@ async fn get_current_energy_price(
 /// Retrieves today's hourly energy price information based on the provided configuration.
 ///
 /// This asynchronous function fetches data using the given `config` and constructs a `Vec<PriceInfo>`
-/// struct representing today's hourly energy prices. If successful, it returns the `Vec<PriceInfo>`.
-/// Otherwise, it returns an error wrapped in a `Box<dyn std::error::Error>`.
+/// struct representing today's and tomorrow's hourly energy prices. If successful, it returns the
+/// tuple `(Vec<PriceInfo>, Vec<PriceInfo>)`. Otherwise, it returns an error wrapped in a
+/// `Box<dyn std::error::Error>`.
 ///
 /// ## Arguments
 ///
@@ -907,11 +963,11 @@ async fn get_current_energy_price(
 ///
 /// ## Returns
 ///
-/// * `Result<Vec<PriceInfo>, Box<dyn std::error::Error>>`: Today's hourly energy prices or an error.
+/// * `Result<(Vec<PriceInfo>, Vec<PriceInfo>), Box<dyn std::error::Error>>`: Tuple of today's and tomorrow's hourly energy prices or an error.
 ///
-async fn get_todays_energy_prices(
+async fn get_hourly_energy_prices(
     config: &AccessConfig,
-) -> Result<Vec<PriceInfo>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<PriceInfo>, Vec<PriceInfo>), Box<dyn std::error::Error>> {
     info!(target: "tibberator.price", "Fetching today's energy prices.");
 
     let id = config.home_id.to_owned();
@@ -933,7 +989,12 @@ async fn get_todays_energy_prices(
 
     info!(target: "tibberator.price", "Received hourly price data");
 
-    PriceInfo::new_hourly(price_info).ok_or(Box::new(LoopEndingError::InvalidData))
+    let today_prices = PriceInfo::new_hourly_today(price_info.today)
+        .ok_or(Box::new(LoopEndingError::InvalidData))?;
+    let tomorrow_prices = PriceInfo::new_hourly_tomorrow(price_info.tomorrow)
+        .ok_or(Box::new(LoopEndingError::InvalidData))?;
+
+    Ok((today_prices, tomorrow_prices))
 }
 
 /// Retrieves today's hourly energy consumption information based on the provided configuration.
@@ -1356,48 +1417,33 @@ pub async fn get_cost_all_years(
     )))
 }
 
-/// Fetches the current day's energy prices from Tibber API.
+/// Fetches the current day's and tomorrows energy prices from Tibber API.
 ///
 /// # Arguments
 /// * `access_config` - A reference to the access configuration containing the necessary credentials.
 ///
 /// # Returns
-/// * `Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`:
-///   - `Ok(Some((prices, label, expiration_time)))`: Contains a vector of energy prices in EUR/kWh,
+/// * `Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`:
+///   - `Ok(Some((today_prices, tomorrow_prices, label, expiration_time)))`: Contains a vector of energy prices in EUR/kWh for today and tomorrow,
 ///     a label describing the data, and the expiration time when the data will be considered stale.
 ///   - `Ok(None)`: Indicates that no data could be fetched or processed.
 ///   - `Err(error)`: Returns an error if there was a problem fetching or processing the energy prices.
 ///
-/// # Example
-/// ```
-/// use tibberator::tibber::get_prices_today;
-/// use tibberator::tibber::AccessConfig;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     let access_config = AccessConfig::default();
-///
-///     match get_prices_today(&access_config).await {
-///         Ok(Some((prices, label, expiration_time))) => {
-///             println!("Energy Prices: {:?}", prices);
-///             println!("Label: {}", label);
-///             println!("Expiration Time: {}", expiration_time.to_rfc3339());
-///         }
-///         Ok(None) => println!("No energy prices data available."),
-///         Err(error) => eprintln!("Error fetching energy prices: {}", error),
-///     }
-/// }
-/// ```
-pub async fn get_prices_today(
+pub async fn get_prices_today_tomorrow(
     access_config: &AccessConfig,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
-    match get_todays_energy_prices(access_config).await {
-        Ok(prices) => {
-            // Add one hour past the last starting time stamp so that the data expire at 12am the next day
-            let time = prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
+) -> Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    match get_hourly_energy_prices(access_config).await {
+        Ok((today_prices, tomorrow_prices)) => {
+            // Calculate expiration time based on last today price
+            let time = today_prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
                 + chrono::Duration::hours(1);
+
+            // Map both today and tomorrow prices to Vec<f64>
+            let today_f64 = today_prices.into_iter().map(|p| p.total).collect();
+            let tomorrow_f64 = tomorrow_prices.into_iter().map(|p| p.total).collect();
+
             Ok(Some((
-                prices.into_iter().map(|p| p.total).collect(),
+                (today_f64, tomorrow_f64),
                 String::from("Energy Prices [EUR/kWh]"),
                 time,
             )))

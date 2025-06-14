@@ -286,7 +286,6 @@ pub mod tibber {
         estimated_daily_fee: &Option<f64>,
     ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
         match display_mode {
-            output::DisplayMode::Prices => get_prices_today(access_config).await,
             output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
             output::DisplayMode::Cost => {
                 get_cost_data_today(access_config, estimated_daily_fee).await
@@ -300,7 +299,17 @@ pub mod tibber {
             output::DisplayMode::AllYears => {
                 get_cost_all_years(access_config, estimated_daily_fee).await
             }
+            _ => {panic!("Not implemented fetching for {:?}", display_mode)}
         }
+    }
+
+    pub async fn fetch_prices_display_data(
+        access_config: &AccessConfig,
+    ) -> Result<
+        Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
+        Box<dyn std::error::Error>,
+    > {
+        get_prices_today_tomorrow(access_config).await
     }
 
     #[cfg(test)]

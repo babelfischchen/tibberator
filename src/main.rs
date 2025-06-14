@@ -26,7 +26,7 @@ use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
         cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data,
-        output::{self, GuiMode},
+        output::{self, DisplayMode, GuiMode},
         tui::{self, AppState},
         AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
     },
@@ -707,33 +707,74 @@ async fn update_display_data(
 
     if state.data_needs_refresh || cache_expired(&state) {
         info!(target: "tibberator.mainloop", "Fetching new display data for {:?}", state.display_mode);
-        match tibberator::tibber::fetch_display_data(
-            access_config,
-            &state.display_mode,
-            &state.estimated_daily_fees,
-        )
-        .await
-        {
-            Ok(Some((data, label, data_time))) => {
-                state
-                    .cached_bar_graph
-                    .insert(current_display_mode, (data, label.to_string(), data_time));
+
+        match current_display_mode {
+            DisplayMode::Prices | DisplayMode::PricesTomorrow => {
+                match tibberator::tibber::fetch_prices_display_data(access_config).await {
+                    Ok(Some(((today, tomorrow), label, data_time))) => {
+                        state.cached_bar_graph.insert(
+                            DisplayMode::Prices,
+                            (today, label.to_string() + " - Today", data_time),
+                        );
+                        state.cached_bar_graph.insert(
+                            DisplayMode::PricesTomorrow,
+                            (tomorrow, label.to_string() + " - Tomorrow", data_time),
+                        );
+                    }
+                    Ok(None) => {
+                        info!(target: "tibberator.mainloop", "No display data available");
+                        let data_vector_today = Vec::new();
+                        let data_vector_tomorrow = Vec::new();
+                        state.cached_bar_graph.insert(
+                            DisplayMode::Prices,
+                            (
+                                data_vector_today,
+                                String::from("No data available"),
+                                Local::now().fixed_offset() + chrono::Duration::days(1),
+                            ),
+                        );
+                        state.cached_bar_graph.insert(
+                            DisplayMode::Prices,
+                            (
+                                data_vector_tomorrow,
+                                String::from("No data available"),
+                                Local::now().fixed_offset() + chrono::Duration::days(1),
+                            ),
+                        );
+                    }
+                    Err(err) => {
+                        error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
+                    }
+                }
             }
-            Ok(None) => {
-                info!(target: "tibberator.mainloop", "No display data available");
-                let data_vector = Vec::new();
-                state.cached_bar_graph.insert(
-                    current_display_mode,
-                    (
-                        data_vector,
-                        String::from("No data available"),
-                        Local::now().fixed_offset() + chrono::Duration::days(1),
-                    ),
-                );
-            }
-            Err(err) => {
-                error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
-            }
+            _ => match tibberator::tibber::fetch_display_data(
+                access_config,
+                &state.display_mode,
+                &state.estimated_daily_fees,
+            )
+            .await
+            {
+                Ok(Some((data, label, data_time))) => {
+                    state
+                        .cached_bar_graph
+                        .insert(current_display_mode, (data, label.to_string(), data_time));
+                }
+                Ok(None) => {
+                    info!(target: "tibberator.mainloop", "No display data available");
+                    let data_vector = Vec::new();
+                    state.cached_bar_graph.insert(
+                        current_display_mode,
+                        (
+                            data_vector,
+                            String::from("No data available"),
+                            Local::now().fixed_offset() + chrono::Duration::days(1),
+                        ),
+                    );
+                }
+                Err(err) => {
+                    error!(target: "tibberator.mainloop", "Failed to fetch display data: {:?}", err);
+                }
+            },
         }
         state.data_needs_refresh = false;
     }
