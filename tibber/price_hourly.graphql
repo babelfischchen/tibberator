@@ -11,6 +11,14 @@ query PriceHourly($id: ID!) {
             currency
             level
           }
+          tomorrow {
+            total
+            energy
+            tax
+            startsAt
+            currency
+            level
+          }
         }
       }
     }
