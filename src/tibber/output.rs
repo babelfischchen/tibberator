@@ -38,6 +38,7 @@ pub enum TaxStyle {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Hash, Eq)]
 pub enum DisplayMode {
     Prices,
+    PricesTomorrow,
     Consumption,
     Cost,
     CostLast30Days,
