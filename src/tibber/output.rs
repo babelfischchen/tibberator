@@ -32,6 +32,7 @@ pub enum TaxStyle {
     None,
 }
 
+// Add a `PricesTomorrow` value to the `DisplayMode` enum and adapt the code of this file accordingly, AI!
 /// `OutputConfig` is a struct that represents the configuration for output.
 /// It contains the following fields: `output_type` and `tax_style`.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Hash, Eq)]
