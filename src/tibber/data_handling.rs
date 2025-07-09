@@ -2056,4 +2056,20 @@ mod tests {
         assert!(time > reference_time, "Time should not be zero");
         assert!(!yearly_nodes.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_price_info_invalid_data() {
+        // Test that PriceInfo parsing returns None when data is missing or malformed
+        let invalid_data = price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent {
+            total: None,
+            energy: None,
+            tax: None,
+            starts_at: None,
+            currency: String::from("EUR"),
+            level: Some(price_current::PriceLevel::NORMAL),
+        };
+
+        let result = PriceInfo::new_current(invalid_data);
+        assert!(result.is_none(), "Parsing should return None for invalid data");
+    }
 }
