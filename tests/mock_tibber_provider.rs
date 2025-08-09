@@ -58,7 +58,11 @@ impl TibberDataProvider for MockTibberDataProvider {
         &self,
         _config: &AccessConfig,
     ) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
-        // Return a mock subscription - this would need to be implemented properly
-        todo!("Mock implementation needed")
+        // Return an error for the mock implementation, which is sufficient for testing
+        // error handling paths in the application
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Mock subscription - simulating connection failure for testing"
+        )))
     }
 }

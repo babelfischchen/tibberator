@@ -642,6 +642,83 @@ pub mod tibber {
 
         #[tokio::test]
         #[serial]
+        async fn test_check_user_shutdown_timeout() {
+            use std::sync::mpsc::channel;
+            
+            let (_sender, receiver) = channel();
+            
+            // Test timeout scenario - no value sent
+            let result = check_user_shutdown(&receiver);
+            assert_eq!(result, false);
+        }
+        
+        #[tokio::test]
+        #[serial]
+        async fn test_check_user_shutdown_disconnect() {
+            use std::sync::mpsc::channel;
+            
+            let (sender, receiver) = channel::<bool>();
+            drop(sender); // Drop the sender to simulate disconnection
+            
+            // Test disconnection scenario
+            let result = check_user_shutdown(&receiver);
+            assert_eq!(result, true);
+        }
+        
+        #[tokio::test]
+        #[serial]
+        async fn test_check_user_shutdown_normal() {
+            use std::sync::mpsc::channel;
+            
+            let (sender, receiver) = channel();
+            
+            // Test normal scenario - value sent
+            sender.send(true).unwrap();
+            let result = check_user_shutdown(&receiver);
+            assert_eq!(result, true);
+        }
+
+                #[tokio::test]
+        #[serial]
+        async fn test_fetch_display_data_all_modes() {
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Consumption),
+                logging: LogConfig::default(),
+            };
+            
+            let provider = RealTibberDataProvider;
+            
+            // Test all display modes
+            let display_modes = vec![
+                DisplayMode::Consumption,
+                DisplayMode::Cost,
+                DisplayMode::CostLast30Days,
+                DisplayMode::CostLast12Months,
+                DisplayMode::AllYears,
+            ];
+            
+            for mode in display_modes {
+                let result = fetch_display_data_with_provider(
+                    &provider,
+                    &config.access,
+                    &mode,
+                    &None,
+                )
+                .await;
+                
+                // All should return Ok
+                assert!(result.is_ok());
+                
+                // Uncomment the following lines if you want to check that data is returned
+                // let display_data = result.unwrap();
+                // assert!(display_data.is_some());
+            }
+        }
+
+        #[tokio::test]
+        #[serial]
         async fn test_fetch_display_data_cost_mode() {
             // Test Cost mode
             let config = Config {
@@ -734,6 +811,30 @@ pub mod tibber {
                 .cached_bar_graph
                 .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
             assert!(cache_expired(&state));
+        }
+        
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_empty_cache() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            state.display_mode = DisplayMode::Prices;
+            // Test with empty cache
+            assert!(cache_expired(&state));
+        }
+        
+        #[tokio::test]
+        #[serial]
+        async fn test_cache_expired_not_expired() {
+            let app_state = create_app_state();
+            let mut state = app_state.lock().unwrap();
+            state.display_mode = DisplayMode::Prices;
+            // Test with cache not expired (future timestamp)
+            let timestamp = Local::now().fixed_offset() + chrono::Duration::hours(1);
+            state
+                .cached_bar_graph
+                .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
+            assert!(!cache_expired(&state));
         }
     }
 }
