@@ -751,7 +751,7 @@ async fn get_viewer(
 ///
 /// ## Returns
 ///
-/// * `Result<String, Box<dyn std::error::Error>>`: A `Result` object that contains either a `String` with the subscription URL or an `Error`.
+/// * `Result<String, Box<dyn std::error::Error + Send + Sync>>`: A `Result` object that contains either a `String` with the subscription URL or an `Error`.
 ///
 /// ## Errors
 ///
@@ -759,7 +759,7 @@ async fn get_viewer(
 ///
 async fn fetch_subscription_url(
     config: &AccessConfig,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let viewer_response = get_viewer(config).await?;
 
     match handle_response_error(viewer_response.errors) {
@@ -797,11 +797,11 @@ async fn fetch_subscription_url(
 ///
 /// ## Returns
 ///
-/// * `Option<Box<dyn std::error::Error>>`: An `Option` containing a boxed `Error` if there are any errors, or `None` if there are no errors.
+/// * `Option<Box<dyn std::error::Error + Send + Sync>>`: An `Option` containing a boxed `Error` if there are any errors, or `None` if there are no errors.
 ///
 fn handle_response_error(
     errors: Option<Vec<graphql_client::Error>>,
-) -> Option<Box<dyn std::error::Error>> {
+) -> Option<Box<dyn std::error::Error + Send + Sync>> {
     match errors {
         Some(error_list) => {
             let mut error_string = String::new();
@@ -830,7 +830,7 @@ fn handle_response_error(
 /// A `Result` containing either:
 /// - A tuple with a `WebSocketStream<ConnectStream>` representing the WebSocket connection
 ///   and a `Response` containing additional information.
-/// - An error of type `Box<dyn std::error::Error>` if there are issues during connection setup.
+/// - An error of type `Box<dyn std::error::Error + Send + Sync>` if there are issues during connection setup.
 ///
 /// # Errors
 ///
@@ -839,7 +839,7 @@ fn handle_response_error(
 ///
 async fn create_websocket(
     config: &AccessConfig,
-) -> Result<(WebSocketStream<ConnectStream>, Response), Box<dyn std::error::Error>> {
+) -> Result<(WebSocketStream<ConnectStream>, Response), Box<dyn std::error::Error + Send + Sync>> {
     let url = fetch_subscription_url(config).await?;
     let uri = Uri::from_str(&url)?;
 
@@ -850,7 +850,7 @@ async fn create_websocket(
     match result {
         Ok(res) => Ok(res),
         Err(err) => Err(Box::new(
-            async_tungstenite::tungstenite::error::Error::from(err),
+            async_tungstenite::tungstenite::Error::from(err),
         )),
     }
 }
@@ -1736,7 +1736,7 @@ async fn create_subscription(
     variables: <LiveMeasurement as GraphQLQuery>::Variables,
     websocket: WebSocketStream<ConnectStream>,
 ) -> Result<LiveMeasurementSubscription, graphql_ws_client::Error> {
-    let init_payload = serde_json::json!({"token": access_token});
+    let init_payload = serde_json::json!({ "token": access_token });
 
     let streaming_operation = StreamingOperation::<LiveMeasurement>::new(variables);
     WSClient::build(websocket)
@@ -1763,21 +1763,20 @@ async fn get_live_measurement(
 
     let websocket = create_websocket(config).await;
     match websocket {
-        Ok(value) => {
-            let (websocket, _) = value;
+        Ok((websocket, _)) => {
             match create_subscription(&config.token, variables, websocket).await {
                 Ok(subscription) => Ok(subscription),
                 Err(error) => Err(Box::new(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    String::from("Subscription creation error: ") + error.to_string().as_str(),
+                    format!("Subscription creation error: {}", error),
                 ))),
             }
         }
         Err(error) => {
-            return Err(Box::new(std::io::Error::new(
+            Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                String::from("Websocket creation error: ") + error.to_string().as_str(),
-            )));
+                format!("Websocket creation error: {}", error),
+            )))
         }
     }
 }
@@ -1787,7 +1786,7 @@ async fn get_live_measurement(
 /// This function attempts to create a subscription for streaming live measurement data
 /// from the Tibber service. If successful, it returns a valid `Subscription` containing
 /// the streaming operation. If an error occurs during the subscription process, an error
-/// message is printed, and the program exits with the `exitcode::PROTOCOL` status code.
+/// is returned.
 ///
 /// # Arguments
 ///
@@ -1796,10 +1795,10 @@ async fn get_live_measurement(
 ///
 /// # Returns
 ///
-/// A `Subscription<StreamingOperation<LiveMeasurement>>`:
+/// A `Result<Subscription<StreamingOperation<LiveMeasurement>>, Box<dyn std::error::Error + Send + Sync>>`:
 /// - If the connection is established successfully, returns a valid subscription for
 ///   live measurement data.
-/// - If an error occurs during the subscription process, the program exits.
+/// - If an error occurs during the subscription process, returns the error.
 ///
 /// # Examples
 ///
@@ -1813,17 +1812,17 @@ async fn get_live_measurement(
 ///   assert!(subscription.stop().await.is_ok());
 /// # }
 /// ```
-pub async fn connect_live_measurement(config: &AccessConfig) -> LiveMeasurementSubscription {
+pub async fn connect_live_measurement(config: &AccessConfig) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
     let subscription = get_live_measurement(&config).await;
 
     match subscription {
         Ok(result) => {
             info!(target: "tibberator.connection", "Successfully connected to Tibber service.");
-            result
+            Ok(result)
         }
         Err(error) => {
             error!(target: "tibberator.connection", "Failed to connect to Tibber service: {:?}", error);
-            std::process::exit(exitcode::PROTOCOL);
+            Err(error)
         }
     }
 }
@@ -1913,7 +1912,7 @@ mod tests {
         use futures::stream::StreamExt;
         let config = AccessConfig::default();
 
-        let mut subscription = connect_live_measurement(&config).await;
+        let mut subscription = connect_live_measurement(&config).await.unwrap();
 
         for _ in 1..=5 {
             let result = timeout(std::time::Duration::from_secs(90), subscription.next()).await;

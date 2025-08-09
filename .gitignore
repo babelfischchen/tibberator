@@ -2,4 +2,5 @@
 /Cargo.lock
 /.vscode
 .aider*
-.bat
+*.bat
+.env

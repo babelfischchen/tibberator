@@ -25,10 +25,10 @@ use tokio::time;
 use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
-        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data,
+        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data_with_provider,
         output::{self, DisplayMode, GuiMode},
         tui::{self, AppState},
-        AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError,
+        AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError, RealTibberDataProvider,
     },
 };
 
@@ -340,7 +340,10 @@ async fn handle_reconnect(
         std::thread::sleep(time::Duration::from_secs(1));
     }
 
-    Ok(connect_live_measurement(&access_config).await)
+    match connect_live_measurement(&access_config).await {
+        Ok(result) => Ok(result),
+        Err(_) => Err(LoopEndingError::Shutdown)
+    }
 }
 
 /// Handles the reconnection process for the TUI interface.
@@ -401,7 +404,10 @@ async fn handle_reconnect_tui(
         std::thread::sleep(time::Duration::from_secs(1));
     }
 
-    Ok(connect_live_measurement(&access_config).await)
+    match connect_live_measurement(&access_config).await {
+        Ok(result) => Ok(result),
+        Err(_) => Err(LoopEndingError::Shutdown)
+    }
 }
 
 /// Handles the main subscription loop for receiving live measurement data with TUI updates.
@@ -422,7 +428,7 @@ async fn subscription_loop_tui(
     app_state: Arc<Mutex<AppState>>,
 ) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error + Send + Sync>> {
     // Initialize subscription
-    let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+    let mut subscription = Box::new(connect_live_measurement(&config.access).await?);
 
     // Update app state status
     {
@@ -747,7 +753,8 @@ async fn update_display_data(
                     }
                 }
             }
-            _ => match tibberator::tibber::fetch_display_data(
+            _ => match tibberator::tibber::fetch_display_data_with_provider(
+                &tibberator::tibber::RealTibberDataProvider,
                 access_config,
                 &state.display_mode,
                 &state.estimated_daily_fees,
@@ -968,13 +975,14 @@ async fn subscription_loop(
     config: Config,
     app_state: Arc<Mutex<AppState>>,
 ) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+    let mut subscription = Box::new(connect_live_measurement(&config.access).await?);
 
     write!(stdout(), "Waiting for data ...").unwrap();
     stdout().flush().unwrap();
 
     loop {
-        let final_result = loop_for_data(&config, subscription.as_mut(), app_state.clone()).await;
+        let provider = RealTibberDataProvider;
+        let final_result = loop_for_data_with_provider(&config, subscription.as_mut(), app_state.clone(), &provider).await;
         match final_result {
             Ok(()) => break,
             Err(error) => match error.downcast_ref::<LoopEndingError>() {

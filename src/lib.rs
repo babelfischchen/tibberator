@@ -3,6 +3,7 @@
 //! This module contains various helper methods to connect to the Tibber API (see https://developer.tibber.com).
 //! You need an access token in order to use the API.
 pub mod tibber {
+    use async_trait::async_trait;
     use chrono::{DateTime, FixedOffset, Local};
     use futures::{future, stream::StreamExt, task::Poll};
     use log::{debug, error, info};
@@ -20,6 +21,119 @@ pub mod tibber {
     use tui::AppState;
 
     use crate::html_logger::LogConfig;
+
+    // Add trait definition for TibberDataProvider
+    #[async_trait]
+    pub trait TibberDataProvider {
+        async fn get_consumption_data_today(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+
+        async fn get_cost_data_today(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+
+        async fn get_cost_last_30_days(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+
+        async fn get_cost_last_12_months(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+
+        async fn get_cost_all_years(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+
+        async fn get_prices_today_tomorrow(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<
+            Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error>,
+        >;
+
+        async fn connect_live_measurement(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>>;
+    }
+
+    // Add real implementation
+    pub struct RealTibberDataProvider;
+
+    #[async_trait]
+    impl TibberDataProvider for RealTibberDataProvider {
+        async fn get_consumption_data_today(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
+        {
+            get_consumption_data_today(config).await
+        }
+
+        async fn get_cost_data_today(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
+        {
+            get_cost_data_today(config, estimated_daily_fee).await
+        }
+
+        async fn get_cost_last_30_days(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
+        {
+            get_cost_last_30_days(config, estimated_daily_fee).await
+        }
+
+        async fn get_cost_last_12_months(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
+        {
+            get_cost_last_12_months(config, estimated_daily_fee).await
+        }
+
+        async fn get_cost_all_years(
+            &self,
+            config: &AccessConfig,
+            estimated_daily_fee: &Option<f64>,
+        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
+        {
+            get_cost_all_years(config, estimated_daily_fee).await
+        }
+
+        async fn get_prices_today_tomorrow(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<
+            Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error>,
+        > {
+            get_prices_today_tomorrow(config).await
+        }
+
+        async fn connect_live_measurement(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
+            connect_live_measurement(config).await
+        }
+    }
 
     mod data_handling;
     pub mod output;
@@ -125,10 +239,11 @@ pub mod tibber {
     ///   assert!(result.is_ok());
     /// # }
     /// ```
-    pub async fn loop_for_data(
+    pub async fn loop_for_data_with_provider(
         config: &Config,
         subscription: &mut LiveMeasurementSubscription,
         app_state: Arc<Mutex<AppState>>,
+        provider: &dyn TibberDataProvider,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let last_value_received = Rc::new(Cell::new(Instant::now()));
         let stop_fun = future::poll_fn(|_cx| {
@@ -150,8 +265,13 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         // Fetch data based on display mode configuration
-        let display_data =
-            fetch_display_data(&config.access, &config.output.display_mode, &None).await?;
+        let display_data = fetch_display_data_with_provider(
+            provider,
+            &config.access,
+            &config.output.display_mode,
+            &None,
+        )
+        .await?;
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
@@ -244,7 +364,6 @@ pub mod tibber {
                 expired
             })
     }
-
     /// Fetches display data based on the specified display mode.
     ///
     /// # Arguments
@@ -280,26 +399,39 @@ pub mod tibber {
     ///     }
     /// }
     /// ```
-    pub async fn fetch_display_data(
+    pub async fn fetch_display_data_with_provider(
+        provider: &dyn TibberDataProvider,
         access_config: &AccessConfig,
         display_mode: &DisplayMode,
         estimated_daily_fee: &Option<f64>,
     ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
         match display_mode {
-            output::DisplayMode::Consumption => get_consumption_data_today(access_config).await,
+            output::DisplayMode::Consumption => {
+                provider.get_consumption_data_today(access_config).await
+            }
             output::DisplayMode::Cost => {
-                get_cost_data_today(access_config, estimated_daily_fee).await
+                provider
+                    .get_cost_data_today(access_config, estimated_daily_fee)
+                    .await
             }
             output::DisplayMode::CostLast30Days => {
-                get_cost_last_30_days(access_config, estimated_daily_fee).await
+                provider
+                    .get_cost_last_30_days(access_config, estimated_daily_fee)
+                    .await
             }
             output::DisplayMode::CostLast12Months => {
-                get_cost_last_12_months(access_config, estimated_daily_fee).await
+                provider
+                    .get_cost_last_12_months(access_config, estimated_daily_fee)
+                    .await
             }
             output::DisplayMode::AllYears => {
-                get_cost_all_years(access_config, estimated_daily_fee).await
+                provider
+                    .get_cost_all_years(access_config, estimated_daily_fee)
+                    .await
             }
-            _ => {panic!("Not implemented fetching for {:?}", display_mode)}
+            _ => {
+                panic!("Not implemented fetching for {:?}", display_mode)
+            }
         }
     }
 
@@ -378,14 +510,18 @@ pub mod tibber {
             let config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_display_mode(output::DisplayMode::Consumption)
                     .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
-            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let subscription_result = connect_live_measurement(&config.access).await;
+            assert!(subscription_result.is_ok());
+            let mut subscription = Box::new(subscription_result.unwrap());
             let app_state = create_app_state();
 
-            let result = loop_for_data(&config, subscription.as_mut(), app_state.clone());
+            let provider = RealTibberDataProvider;
+            let result =
+                loop_for_data_with_provider(&config, subscription.as_mut(), app_state.clone(), &provider);
             tokio::time::sleep(TokioDuration::from_secs(10)).await;
             app_state.lock().unwrap().should_quit = true;
             let result = timeout(std::time::Duration::from_secs(30), result).await;
@@ -400,17 +536,20 @@ pub mod tibber {
             let mut config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices)
+                    .with_display_mode(output::DisplayMode::Consumption)
                     .with_gui_mode(output::GuiMode::Simple),
                 logging: LogConfig::default(),
             };
             config.access.home_id.pop();
-            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let subscription_result = connect_live_measurement(&config.access).await;
+            assert!(subscription_result.is_ok());
+            let mut subscription = Box::new(subscription_result.unwrap());
             let app_state = create_app_state();
 
+            let provider = RealTibberDataProvider;
             let result = timeout(
                 std::time::Duration::from_secs(10),
-                loop_for_data(&config, subscription.as_mut(), app_state),
+                loop_for_data_with_provider(&config, subscription.as_mut(), app_state, &provider),
             )
             .await;
             assert!(result.is_ok());
@@ -429,14 +568,18 @@ pub mod tibber {
             let mut config = Config {
                 access: AccessConfig::default(),
                 output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices),
+                    .with_display_mode(output::DisplayMode::Consumption),
                 logging: LogConfig::default(),
             };
             config.access.reconnect_timeout = 0;
-            let mut subscription = Box::new(connect_live_measurement(&config.access).await);
+            let subscription_result = connect_live_measurement(&config.access).await;
+            assert!(subscription_result.is_ok());
+            let mut subscription = Box::new(subscription_result.unwrap());
             let app_state = create_app_state();
 
-            let result = loop_for_data(&config, subscription.as_mut(), app_state).await;
+            let provider = RealTibberDataProvider;
+            let result =
+                loop_for_data_with_provider(&config, subscription.as_mut(), app_state, &provider).await;
             assert!(result.as_ref().is_err());
             let error = result.err().unwrap();
             let error_type = error.downcast::<LoopEndingError>();
@@ -448,25 +591,6 @@ pub mod tibber {
         #[tokio::test]
         #[serial]
         async fn test_fetch_display_data() {
-            // Test Prices mode
-            let config = Config {
-                access: AccessConfig::default(),
-                output: OutputConfig::new(OutputType::Silent)
-                    .with_display_mode(output::DisplayMode::Prices),
-                logging: LogConfig::default(),
-            };
-
-            let result =
-                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
-            assert!(result.is_ok());
-            let display_data = result.unwrap();
-            assert!(display_data.is_some());
-
-            if let Some((prices, description, _)) = display_data {
-                assert_eq!(prices.len(), 24);
-                assert_eq!(description, "Energy Prices [EUR/kWh]");
-            }
-
             // Test Consumption mode
             let config = Config {
                 access: AccessConfig::default(),
@@ -475,8 +599,13 @@ pub mod tibber {
                 logging: LogConfig::default(),
             };
 
-            let result =
-                fetch_display_data(&config.access, &config.output.display_mode, &None).await;
+            let result = fetch_display_data_with_provider(
+                &RealTibberDataProvider,
+                &config.access,
+                &config.output.display_mode,
+                &None,
+            )
+            .await;
             assert!(result.is_ok());
             let display_data = result.unwrap();
             assert!(display_data.is_some());
@@ -484,6 +613,30 @@ pub mod tibber {
             if let Some((consumption, description, _)) = display_data {
                 assert_eq!(consumption.len(), 24);
                 assert_eq!(description, "Energy Consumption [kWh]");
+            }
+
+            // Test Cost mode
+            let config = Config {
+                access: AccessConfig::default(),
+                output: OutputConfig::new(OutputType::Silent)
+                    .with_display_mode(output::DisplayMode::Cost),
+                logging: LogConfig::default(),
+            };
+
+            let result = fetch_display_data_with_provider(
+                &RealTibberDataProvider,
+                &config.access,
+                &config.output.display_mode,
+                &None,
+            )
+            .await;
+            assert!(result.is_ok());
+            let display_data = result.unwrap();
+            assert!(display_data.is_some());
+
+            if let Some((cost, description, _)) = display_data {
+                assert_eq!(cost.len(), 24);
+                assert_eq!(description, "Cost Today [EUR]");
             }
         }
 
@@ -500,7 +653,8 @@ pub mod tibber {
 
             let estimated_daily_fee = Some(24.0); // Example daily fee
 
-            let result = fetch_display_data(
+            let result = fetch_display_data_with_provider(
+                &RealTibberDataProvider,
                 &config.access,
                 &config.output.display_mode,
                 &estimated_daily_fee,

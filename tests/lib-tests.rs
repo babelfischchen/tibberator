@@ -12,8 +12,8 @@ mod lib_tests {
     use http::HeaderValue;
     use std::sync::{Arc, Mutex};
     use tibberator::tibber::{
-        live_measurement, loop_for_data, output::DisplayMode, tui::AppState, Config,
-        LiveMeasurementOperation, LiveMeasurementSubscription,
+        live_measurement, loop_for_data_with_provider, output::DisplayMode, tui::AppState, Config,
+        LiveMeasurementOperation, LiveMeasurementSubscription, RealTibberDataProvider,
     };
     use tokio::time::sleep;
 
@@ -128,7 +128,8 @@ mod lib_tests {
                 app_state.lock().unwrap().should_quit = true;
             },
             async {
-                let result = loop_for_data(&config, &mut stream, app_state.clone()).await;
+                let provider = RealTibberDataProvider;
+                let result = loop_for_data_with_provider(&config, &mut stream, app_state.clone(), &provider).await;
                 assert!(result.is_ok());
             }
         );
