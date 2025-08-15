@@ -1629,6 +1629,30 @@ pub async fn get_cost_data_today(
     estimated_daily_fee: &Option<f64>,
 ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
     let current_hour = Local::now().hour() as usize;
+    
+    // Special case: when current_hour is 0 (midnight), we haven't completed any hours yet
+    // so we shouldn't show any cost data
+    if current_hour == 0 {
+        // Set last_data_time to 1:15 AM (next hour + 15 minutes)
+        let next_hour = Local::now()
+            .date_naive()
+            .and_hms_opt(1, 15, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .fixed_offset();
+            
+        let description_string = String::from("Cost Today [EUR]");
+        let mut pages_so_far = Vec::new();
+        
+        // Pad with zeros for all 24 hours
+        for _i in 0..24 {
+            pages_so_far.push(0.0);
+        }
+        
+        return Ok(Some((pages_so_far, description_string, next_hour)));
+    }
+    
     let (mut pages_so_far, last_data_time) = match get_last_consumption_pages(
         access_config,
         current_hour,
