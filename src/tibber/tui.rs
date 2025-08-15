@@ -365,7 +365,7 @@ fn create_month_string(month: usize) -> String {
     return String::from(months[month - 1]);
 }
 
-fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar> {
+fn create_bar_data(data: &Vec<f64>, interval: TimeInterval) -> Vec<Bar<'_>> {
     let right_now = Local::now();
     let current_hour = right_now.hour() as usize;
     let current_date = right_now.naive_local();

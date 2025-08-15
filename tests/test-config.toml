@@ -1,5 +1,5 @@
 [access]
-token = "5K4MVS-OjfWhK_4yrjOlFe1F6kJXPVf7eQYggo8ebAE"
+token = "3A77EECF61BD445F47241A5A36202185C35AF3AF58609E19B53F3A8872AD7BE1-1"
 url = "https://api.tibber.com/v1-beta/gql"
 home_id = "96a14971-525a-4420-aae9-e5aedaa129ff"
 reconnect_timeout = 30

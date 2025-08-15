@@ -242,7 +242,7 @@ pub mod tibber {
     ///   let provider = RealTibberDataProvider;
     ///
     ///   let state = app_state.clone();
-///
+    ///
     ///   tokio::spawn(async move {
     ///     std::thread::sleep(time::Duration::from_secs(3));
     ///     app_state.lock().unwrap().should_quit = true;
@@ -277,13 +277,34 @@ pub mod tibber {
         let mut current_price_info = update_current_energy_price_info(&config.access, None).await?;
 
         // Fetch data based on display mode configuration
-        let display_data = fetch_display_data_with_provider(
-            provider,
-            &config.access,
-            &config.output.display_mode,
-            &None,
-        )
-        .await?;
+        let display_data = match &config.output.display_mode {
+            output::DisplayMode::Prices | output::DisplayMode::PricesTomorrow => {
+                // Handle Prices display modes directly
+                match fetch_prices_display_data(&config.access).await? {
+                    Some(((today_prices, tomorrow_prices), description, timestamp)) => {
+                        // Select the appropriate prices based on the display mode
+                        let selected_prices = match &config.output.display_mode {
+                            output::DisplayMode::Prices => today_prices,
+                            output::DisplayMode::PricesTomorrow => tomorrow_prices,
+                            // These cases are already handled by the outer match, but included for completeness
+                            _ => today_prices,
+                        };
+                        Some((selected_prices, description, timestamp))
+                    }
+                    None => None,
+                }
+            }
+            // For all other display modes, use the existing fetch function
+            _ => {
+                fetch_display_data_with_provider(
+                    provider,
+                    &config.access,
+                    &config.output.display_mode,
+                    &None,
+                )
+                .await?
+            }
+        };
 
         let mut stream = subscription.take_until(stop_fun);
         loop {
