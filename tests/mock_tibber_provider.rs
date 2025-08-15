@@ -54,6 +54,13 @@ impl TibberDataProvider for MockTibberDataProvider {
         Ok(Some(((vec![10.0, 15.0], vec![20.0, 25.0]), "Mock Prices".to_string(), Local::now().fixed_offset())))
     }
     
+    async fn estimate_daily_fees(
+        &self,
+        _config: &AccessConfig,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+        Ok(Some(24.5))
+    }
+    
     async fn connect_live_measurement(
         &self,
         _config: &AccessConfig,

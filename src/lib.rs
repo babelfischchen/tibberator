@@ -62,6 +62,11 @@ pub mod tibber {
             Box<dyn std::error::Error>,
         >;
 
+        async fn estimate_daily_fees(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<Option<f64>, Box<dyn std::error::Error>>;
+
         async fn connect_live_measurement(
             &self,
             config: &AccessConfig,
@@ -125,6 +130,13 @@ pub mod tibber {
             Box<dyn std::error::Error>,
         > {
             get_prices_today_tomorrow(config).await
+        }
+
+        async fn estimate_daily_fees(
+            &self,
+            config: &AccessConfig,
+        ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+            estimate_daily_fees(config).await
         }
 
         async fn connect_live_measurement(
@@ -444,6 +456,13 @@ pub mod tibber {
         get_prices_today_tomorrow(access_config).await
     }
 
+    pub async fn estimate_daily_fees_with_provider(
+        provider: &dyn TibberDataProvider,
+        config: &AccessConfig,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+        provider.estimate_daily_fees(config).await
+    }
+
     #[cfg(test)]
     mod tests {
         use std::collections::HashMap;
@@ -520,8 +539,12 @@ pub mod tibber {
             let app_state = create_app_state();
 
             let provider = RealTibberDataProvider;
-            let result =
-                loop_for_data_with_provider(&config, subscription.as_mut(), app_state.clone(), &provider);
+            let result = loop_for_data_with_provider(
+                &config,
+                subscription.as_mut(),
+                app_state.clone(),
+                &provider,
+            );
             tokio::time::sleep(TokioDuration::from_secs(10)).await;
             app_state.lock().unwrap().should_quit = true;
             let result = timeout(std::time::Duration::from_secs(30), result).await;
@@ -579,7 +602,8 @@ pub mod tibber {
 
             let provider = RealTibberDataProvider;
             let result =
-                loop_for_data_with_provider(&config, subscription.as_mut(), app_state, &provider).await;
+                loop_for_data_with_provider(&config, subscription.as_mut(), app_state, &provider)
+                    .await;
             assert!(result.as_ref().is_err());
             let error = result.err().unwrap();
             let error_type = error.downcast::<LoopEndingError>();
@@ -644,41 +668,41 @@ pub mod tibber {
         #[serial]
         async fn test_check_user_shutdown_timeout() {
             use std::sync::mpsc::channel;
-            
+
             let (_sender, receiver) = channel();
-            
+
             // Test timeout scenario - no value sent
             let result = check_user_shutdown(&receiver);
             assert_eq!(result, false);
         }
-        
+
         #[tokio::test]
         #[serial]
         async fn test_check_user_shutdown_disconnect() {
             use std::sync::mpsc::channel;
-            
+
             let (sender, receiver) = channel::<bool>();
             drop(sender); // Drop the sender to simulate disconnection
-            
+
             // Test disconnection scenario
             let result = check_user_shutdown(&receiver);
             assert_eq!(result, true);
         }
-        
+
         #[tokio::test]
         #[serial]
         async fn test_check_user_shutdown_normal() {
             use std::sync::mpsc::channel;
-            
+
             let (sender, receiver) = channel();
-            
+
             // Test normal scenario - value sent
             sender.send(true).unwrap();
             let result = check_user_shutdown(&receiver);
             assert_eq!(result, true);
         }
 
-                #[tokio::test]
+        #[tokio::test]
         #[serial]
         async fn test_fetch_display_data_all_modes() {
             let config = Config {
@@ -687,9 +711,9 @@ pub mod tibber {
                     .with_display_mode(output::DisplayMode::Consumption),
                 logging: LogConfig::default(),
             };
-            
+
             let provider = RealTibberDataProvider;
-            
+
             // Test all display modes
             let display_modes = vec![
                 DisplayMode::Consumption,
@@ -698,19 +722,14 @@ pub mod tibber {
                 DisplayMode::CostLast12Months,
                 DisplayMode::AllYears,
             ];
-            
+
             for mode in display_modes {
-                let result = fetch_display_data_with_provider(
-                    &provider,
-                    &config.access,
-                    &mode,
-                    &None,
-                )
-                .await;
-                
+                let result =
+                    fetch_display_data_with_provider(&provider, &config.access, &mode, &None).await;
+
                 // All should return Ok
                 assert!(result.is_ok());
-                
+
                 // Uncomment the following lines if you want to check that data is returned
                 // let display_data = result.unwrap();
                 // assert!(display_data.is_some());
@@ -812,7 +831,7 @@ pub mod tibber {
                 .insert(DisplayMode::Prices, (vec![], String::from(""), timestamp));
             assert!(cache_expired(&state));
         }
-        
+
         #[tokio::test]
         #[serial]
         async fn test_cache_expired_empty_cache() {
@@ -822,7 +841,7 @@ pub mod tibber {
             // Test with empty cache
             assert!(cache_expired(&state));
         }
-        
+
         #[tokio::test]
         #[serial]
         async fn test_cache_expired_not_expired() {

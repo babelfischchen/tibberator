@@ -25,10 +25,11 @@ use tokio::time;
 use tibberator::{
     html_logger::{HtmlLogger, LogConfig},
     tibber::{
-        cache_expired, connect_live_measurement, estimate_daily_fees, get_home_ids, loop_for_data_with_provider,
+        cache_expired, connect_live_measurement, get_home_ids, loop_for_data_with_provider,
         output::{self, DisplayMode, GuiMode},
         tui::{self, AppState},
         AccessConfig, Config, LiveMeasurementSubscription, LoopEndingError, RealTibberDataProvider,
+        TibberDataProvider,
     },
 };
 
@@ -138,23 +139,29 @@ async fn main() -> ExitCode {
     // Clone app_state for the subscription thread
     let app_state_clone = Arc::clone(&app_state);
 
+    // Create provider instance
+    let provider = RealTibberDataProvider;
+
     let local = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("Could not create local thread.");
 
     // Start subscription in a separate thread
-    let subscription_handle =
-        std::thread::spawn(move || {
-            local.block_on(async {
+    let subscription_handle = std::thread::spawn(move || {
+        local.block_on(async {
             let config_for_thread = Config {
                 access: access_config,
                 output: output_config,
                 logging: logging_config,
             };
             let subscription_result = match &config_for_thread.output.gui_mode {
-                GuiMode::Simple => subscription_loop(config_for_thread, app_state_clone).await,
-                GuiMode::Advanced => subscription_loop_tui(config_for_thread, app_state_clone).await
+                GuiMode::Simple => {
+                    subscription_loop(config_for_thread, app_state_clone, &provider).await
+                }
+                GuiMode::Advanced => {
+                    subscription_loop_tui(config_for_thread, app_state_clone, &provider).await
+                }
             };
             match subscription_result {
                 Ok(Some(subscription)) => match subscription.stop().await {
@@ -179,7 +186,7 @@ async fn main() -> ExitCode {
                 }
             }
         })
-        });
+    });
 
     // Main event loop
     while !app_state.lock().unwrap().should_quit && !subscription_handle.is_finished() {
@@ -342,7 +349,7 @@ async fn handle_reconnect(
 
     match connect_live_measurement(&access_config).await {
         Ok(result) => Ok(result),
-        Err(_) => Err(LoopEndingError::Shutdown)
+        Err(_) => Err(LoopEndingError::Shutdown),
     }
 }
 
@@ -406,7 +413,7 @@ async fn handle_reconnect_tui(
 
     match connect_live_measurement(&access_config).await {
         Ok(result) => Ok(result),
-        Err(_) => Err(LoopEndingError::Shutdown)
+        Err(_) => Err(LoopEndingError::Shutdown),
     }
 }
 
@@ -426,9 +433,10 @@ async fn handle_reconnect_tui(
 async fn subscription_loop_tui(
     config: Config,
     app_state: Arc<Mutex<AppState>>,
+    provider: &dyn TibberDataProvider,
 ) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error + Send + Sync>> {
     // Initialize subscription
-    let mut subscription = Box::new(connect_live_measurement(&config.access).await?);
+    let mut subscription = Box::new(provider.connect_live_measurement(&config.access).await?);
 
     // Update app state status
     {
@@ -437,10 +445,10 @@ async fn subscription_loop_tui(
     }
 
     // fetch an estimate for the daily fee
-    update_daily_fees(&config.access, &app_state).await?;
+    update_daily_fees(&config.access, &app_state, provider).await?;
 
     // Fetch display data based on display mode
-    update_display_data(&config.access, &app_state).await?;
+    update_display_data(&config.access, &app_state, provider).await?;
 
     // Create a custom data handler that updates the app state
     let data_handler = create_data_handler(app_state.clone());
@@ -476,7 +484,7 @@ async fn subscription_loop_tui(
         };
 
         // Check if data needs refresh
-        update_display_data(&config.access, &app_state).await?;
+        update_display_data(&config.access, &app_state, provider).await?;
 
         // Poll data using the dedicated function
         // Pass ownership of subscription to poll_data and reassign the returned Box
@@ -571,8 +579,10 @@ async fn update_current_energy_price(
 async fn update_daily_fees(
     access_config: &AccessConfig,
     app_state: &Arc<Mutex<AppState>>,
+    provider: &dyn TibberDataProvider,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let estimated_daily_fee_result = estimate_daily_fees(access_config).await;
+    let estimated_daily_fee_result =
+        tibberator::tibber::estimate_daily_fees_with_provider(provider, access_config).await;
     let mut state = app_state.lock().unwrap();
     state.estimated_daily_fees = match estimated_daily_fee_result {
         Ok(estimated_daily_fee) => estimated_daily_fee,
@@ -704,6 +714,7 @@ async fn refresh_subscription_if_outdated(
 async fn update_display_data(
     access_config: &AccessConfig,
     app_state: &Arc<Mutex<AppState>>,
+    provider: &dyn TibberDataProvider,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cloned_app_state = app_state.clone(); // Clone needed for async block
     let mut state = cloned_app_state.lock().unwrap();
@@ -754,7 +765,7 @@ async fn update_display_data(
                 }
             }
             _ => match tibberator::tibber::fetch_display_data_with_provider(
-                &tibberator::tibber::RealTibberDataProvider,
+                provider,
                 access_config,
                 &state.display_mode,
                 &state.estimated_daily_fees,
@@ -974,15 +985,21 @@ where
 async fn subscription_loop(
     config: Config,
     app_state: Arc<Mutex<AppState>>,
+    provider: &dyn TibberDataProvider,
 ) -> Result<Option<Box<LiveMeasurementSubscription>>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut subscription = Box::new(connect_live_measurement(&config.access).await?);
+    let mut subscription = Box::new(provider.connect_live_measurement(&config.access).await?);
 
     write!(stdout(), "Waiting for data ...").unwrap();
     stdout().flush().unwrap();
 
     loop {
-        let provider = RealTibberDataProvider;
-        let final_result = loop_for_data_with_provider(&config, subscription.as_mut(), app_state.clone(), &provider).await;
+        let final_result = loop_for_data_with_provider(
+            &config,
+            subscription.as_mut(),
+            app_state.clone(),
+            provider,
+        )
+        .await;
         match final_result {
             Ok(()) => break,
             Err(error) => match error.downcast_ref::<LoopEndingError>() {
@@ -1050,8 +1067,9 @@ mod tests {
         let config = get_test_config();
 
         let app_state = create_app_state();
+        let provider = RealTibberDataProvider;
 
-        let subscription = subscription_loop(config, app_state.clone());
+        let subscription = subscription_loop(config, app_state.clone(), &provider);
         sleep(time::Duration::from_secs(5)).await;
         app_state.lock().unwrap().should_quit = true;
         let subscription = subscription.await;
