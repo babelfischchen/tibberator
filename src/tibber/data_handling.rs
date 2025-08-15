@@ -1489,6 +1489,23 @@ pub async fn update_current_energy_price_info(
     }
 }
 
+/// Fetches a page of consumption data from the Tibber API.
+///
+/// This function retrieves a specific page of consumption data using a cursor-based pagination approach.
+/// It's used to fetch historical consumption data in chunks.
+///
+/// # Arguments
+///
+/// * `config` - A reference to the access configuration containing necessary details like home ID.
+/// * `cursor` - A reference to a string representing the cursor for pagination.
+///
+/// # Returns
+///
+/// A `Result` containing a tuple with:
+/// - A `ConsumptionPage` representing the fetched consumption data page.
+/// - A `DateTime<FixedOffset>` representing the timestamp of the data.
+/// Or an error wrapped in a `Box<dyn std::error::Error>` if the request fails or the data is invalid.
+///
 async fn get_consumption_page(
     config: &AccessConfig,
     cursor: &String,
@@ -1535,12 +1552,23 @@ async fn get_consumption_page(
     Ok((page, time))
 }
 
-/// Estimates the daily fees based on the provided configuration.
+/// Retrieves the last `n` consumption pages from the Tibber API.
 ///
-/// Returns:
-///   - Ok(Some(fee)): Successfully calculated daily fee
-///   - Ok(None): No data available to calculate fees
-///   - Err: An error occurred during calculation
+/// This function fetches multiple pages of consumption data, retrieving the most recent ones first.
+/// It's used to gather historical consumption data for cost calculations and analysis.
+///
+/// # Arguments
+///
+/// * `config` - A reference to the access configuration containing necessary details like home ID.
+/// * `n` - The number of consumption pages to retrieve.
+///
+/// # Returns
+///
+/// A `Result` containing a tuple with:
+/// - A vector of `ConsumptionPage` representing the fetched consumption data pages.
+/// - A `DateTime<FixedOffset>` representing the timestamp of the data.
+/// Or an error wrapped in a `Box<dyn std::error::Error>` if the request fails or the data is invalid.
+///
 async fn get_last_consumption_pages(
     config: &AccessConfig,
     n: usize,

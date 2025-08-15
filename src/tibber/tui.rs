@@ -58,6 +58,17 @@ enum TimeInterval {
 }
 
 /// Initialize the terminal for TUI rendering
+///
+/// This function prepares the terminal for rendering the TUI by enabling raw mode,
+/// entering an alternate screen, and hiding the cursor. It returns a Terminal instance
+/// that can be used for rendering.
+///
+/// # Returns
+///
+/// A `Result` containing either:
+/// - `Ok(Terminal<CrosstermBackend<io::Stdout>>)` - The initialized terminal instance
+/// - `Err(io::Error)` - An error if terminal initialization fails
+///
 pub fn init_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>, io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -66,6 +77,19 @@ pub fn init_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>, io::Err
 }
 
 /// Restore the terminal to its original state
+///
+/// This function restores the terminal to its original state after TUI rendering
+/// by disabling raw mode, leaving the alternate screen, showing the cursor, and
+/// ensuring the cursor is visible.
+///
+/// # Arguments
+///
+/// * `terminal` - A mutable reference to the terminal instance to restore
+///
+/// # Returns
+///
+/// A `Result` indicating success or an IO error
+///
 pub fn restore_terminal(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> Result<(), io::Error> {
@@ -76,6 +100,19 @@ pub fn restore_terminal(
 }
 
 /// Handle keyboard events
+///
+/// This function polls for keyboard events and updates the application state
+/// based on user input. It handles quitting the application (q key), cycling
+/// through display modes (d and s keys), and other keyboard interactions.
+///
+/// # Arguments
+///
+/// * `app_state` - A mutable reference to the application state to update
+///
+/// # Returns
+///
+/// A `Result` indicating success or an IO error
+///
 pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
     if event::poll(Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
@@ -111,6 +148,16 @@ pub fn handle_events(app_state: &mut AppState) -> Result<(), io::Error> {
 }
 
 /// Draw the UI
+///
+/// This function renders the complete user interface by drawing all UI components
+/// including the header, main content, bar graph, and footer. It uses a layout
+/// system to organize the different sections of the interface.
+///
+/// # Arguments
+///
+/// * `frame` - A mutable reference to the frame where UI elements will be rendered
+/// * `app_state` - A reference to the current application state
+///
 pub fn draw_ui(frame: &mut Frame, app_state: &AppState) {
     // Create the layout
     let chunks = Layout::default()

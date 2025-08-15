@@ -210,15 +210,14 @@ pub mod tibber {
         }
     }
 
-    /// # `loop_for_data`
-    ///
     /// Asynchronously processes streaming data from a subscription, monitoring for user shutdown requests
     /// and reconnect conditions. The function takes care of handling timeouts, disconnections, and invalid data.
     ///
     /// ## Parameters
     /// - `config`: A reference to the configuration settings.
     /// - `subscription`: A mutable reference to the data subscription.
-    /// - `receiver`: A reference to a `Receiver<bool>` channel for monitoring user shutdown requests.
+    /// - `app_state`: A shared reference to the application state for updating the UI.
+    /// - `provider`: A reference to a TibberDataProvider trait object for fetching additional data.
     ///
     /// ## Return Value
     /// - `Ok(())`: Indicates successful completion (shutdown requested).
@@ -229,8 +228,8 @@ pub mod tibber {
     /// ```rust
     ///   use tibberator::tibber::{
     ///                            tui::AppState,
-    ///                            Config, loop_for_data,
-    ///                            AccessConfig, connect_live_measurement,
+    ///                            Config, loop_for_data_with_provider,
+    ///                            AccessConfig, connect_live_measurement, RealTibberDataProvider,
     ///                           };
     ///   use std::sync::{Arc, Mutex};
     ///   use tokio::time;
@@ -240,14 +239,15 @@ pub mod tibber {
     ///   let config = Config::default();
     ///   let mut subscription = connect_live_measurement(&config.access).await;
     ///   let app_state = Arc::new(Mutex::new(AppState::default()));
+    ///   let provider = RealTibberDataProvider;
     ///
     ///   let state = app_state.clone();
-
+///
     ///   tokio::spawn(async move {
     ///     std::thread::sleep(time::Duration::from_secs(3));
     ///     app_state.lock().unwrap().should_quit = true;
     ///   });
-    ///   let result = loop_for_data(&config, &mut subscription, state).await;
+    ///   let result = loop_for_data_with_provider(&config, &mut subscription, state, &provider).await;
     ///   assert!(result.is_ok());
     /// # }
     /// ```
@@ -447,6 +447,23 @@ pub mod tibber {
         }
     }
 
+    /// Fetches today's and tomorrow's energy prices for display purposes.
+    ///
+    /// This function retrieves hourly energy prices for both the current day and the next day
+    /// from the Tibber API. The data is formatted for display in the application's UI.
+    ///
+    /// # Arguments
+    ///
+    /// * `access_config` - A reference to the access configuration containing the necessary credentials.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>`
+    ///   - `Ok(Some(((today_prices, tomorrow_prices), description, expiration_time)))` containing
+    ///     energy prices in EUR/kWh for today and tomorrow, a description string, and the expiration time.
+    ///   - `Ok(None)` if no data could be fetched or processed.
+    ///   - `Err(error)` if there was a problem fetching or processing the energy prices.
+    ///
     pub async fn fetch_prices_display_data(
         access_config: &AccessConfig,
     ) -> Result<
@@ -456,6 +473,23 @@ pub mod tibber {
         get_prices_today_tomorrow(access_config).await
     }
 
+    /// Estimates the daily fees using a TibberDataProvider.
+    ///
+    /// This function provides a wrapper around the TibberDataProvider's estimate_daily_fees method,
+    /// allowing for consistent fee estimation across different implementations of the trait.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - A reference to a TibberDataProvider trait object that will be used to estimate fees.
+    /// * `config` - A reference to the access configuration containing necessary information.
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Option<f64>, Box<dyn std::error::Error>>`
+    ///   - `Ok(Some(fee))` if the daily fee was successfully estimated.
+    ///   - `Ok(None)` if no data is available to calculate fees.
+    ///   - `Err(error)` if an error occurred during the estimation process.
+    ///
     pub async fn estimate_daily_fees_with_provider(
         provider: &dyn TibberDataProvider,
         config: &AccessConfig,

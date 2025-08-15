@@ -46,6 +46,15 @@ pub enum DisplayMode {
 }
 
 impl DisplayMode {
+    /// Returns the next display mode in the cycle.
+    ///
+    /// This method provides a way to cycle through the available display modes in a fixed order:
+    /// Prices → PricesTomorrow → Consumption → Cost → CostLast30Days → CostLast12Months → AllYears → Prices
+    ///
+    /// # Returns
+    ///
+    /// The next `DisplayMode` variant in the cycle.
+    ///
     pub fn next(&self) -> DisplayMode {
         match self {
             DisplayMode::Prices => DisplayMode::PricesTomorrow,
@@ -58,6 +67,15 @@ impl DisplayMode {
         }
     }
 
+    /// Returns the previous display mode in the cycle.
+    ///
+    /// This method provides a way to cycle through the available display modes in reverse order:
+    /// Prices → AllYears → CostLast12Months → CostLast30Days → Cost → Consumption → PricesTomorrow → Prices
+    ///
+    /// # Returns
+    ///
+    /// The previous `DisplayMode` variant in the cycle.
+    ///
     pub fn prev(&self) -> DisplayMode {
         match self {
             DisplayMode::Prices => DisplayMode::AllYears,
@@ -117,12 +135,36 @@ impl OutputConfig {
     }
 
     /// Creates a new OutputConfig with the specified display mode
+    ///
+    /// This method allows for method chaining when configuring the OutputConfig,
+    /// setting the display mode to the specified value.
+    ///
+    /// # Arguments
+    ///
+    /// * `display_mode` - The DisplayMode to set for this configuration
+    ///
+    /// # Returns
+    ///
+    /// The modified OutputConfig with the new display mode
+    ///
     pub fn with_display_mode(mut self, display_mode: DisplayMode) -> Self {
         self.display_mode = display_mode;
         self
     }
 
     /// Creates a new OutputConfig with the specified gui mode
+    ///
+    /// This method allows for method chaining when configuring the OutputConfig,
+    /// setting the gui mode to the specified value.
+    ///
+    /// # Arguments
+    ///
+    /// * `gui_mode` - The GuiMode to set for this configuration
+    ///
+    /// # Returns
+    ///
+    /// The modified OutputConfig with the new gui mode
+    ///
     pub fn with_gui_mode(mut self, gui_mode: GuiMode) -> Self {
         self.gui_mode = gui_mode;
         self
