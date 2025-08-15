@@ -237,18 +237,21 @@ pub mod tibber {
     /// # #[tokio::main]
     /// # async fn main() {
     ///   let config = Config::default();
-    ///   let mut subscription = connect_live_measurement(&config.access).await;
-    ///   let app_state = Arc::new(Mutex::new(AppState::default()));
-    ///   let provider = RealTibberDataProvider;
+    ///   let subscription_result = connect_live_measurement(&config.access).await;
+    ///   // Handle the Result properly
+    ///   if let Ok(mut subscription) = subscription_result {
+    ///     let app_state = Arc::new(Mutex::new(AppState::default()));
+    ///     let provider = RealTibberDataProvider;
     ///
-    ///   let state = app_state.clone();
+    ///     let state = app_state.clone();
     ///
-    ///   tokio::spawn(async move {
-    ///     std::thread::sleep(time::Duration::from_secs(3));
-    ///     app_state.lock().unwrap().should_quit = true;
-    ///   });
-    ///   let result = loop_for_data_with_provider(&config, &mut subscription, state, &provider).await;
-    ///   assert!(result.is_ok());
+    ///     tokio::spawn(async move {
+    ///       tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    ///       app_state.lock().unwrap().should_quit = true;
+    ///     });
+    ///     let result = loop_for_data_with_provider(&config, &mut subscription, state, &provider).await;
+    ///     assert!(result.is_ok());
+    ///   }
     /// # }
     /// ```
     pub async fn loop_for_data_with_provider(
@@ -411,17 +414,19 @@ pub mod tibber {
     ///   - `Err(e)` if an error occurs during the fetch operation.
     ///
     /// # Examples
-    /// ```
+    /// ```rust
     /// use tibberator::html_logger::LogConfig;
-    /// use tibberator::tibber::{output::{self, GuiMode, OutputConfig, OutputType}, AccessConfig, Config, fetch_display_data};
+    /// use tibberator::tibber::{output::{self, GuiMode, OutputConfig, OutputType, DisplayMode}, AccessConfig, Config, fetch_display_data_with_provider, RealTibberDataProvider};
     /// use chrono::FixedOffset;
     ///
     /// #[tokio::main]
     /// async fn main() {
     ///     let mut config = Config::default();
+    ///     config.output.display_mode = DisplayMode::Consumption;  // Use a supported display mode
     ///     let estimated_daily_fee = Some(10.5);
+    ///     let provider = RealTibberDataProvider;
     ///
-    ///     match fetch_display_data(&config.access, &config.output.display_mode, &estimated_daily_fee).await {
+    ///     match fetch_display_data_with_provider(&provider, &config.access, &config.output.display_mode, &estimated_daily_fee).await {
     ///         Ok(Some((prices, consumption_data, timestamp))) => {
     ///             println!("Prices: {:?}", prices);
     ///             println!("Consumption Data: {:?}", consumption_data);

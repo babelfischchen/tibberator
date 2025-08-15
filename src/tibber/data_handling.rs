@@ -1837,7 +1837,7 @@ async fn get_live_measurement(
 /// # async fn main() {
 ///   let config = AccessConfig::default();
 ///   let subscription = connect_live_measurement(&config).await;
-///   assert!(subscription.stop().await.is_ok());
+///   assert!(subscription.is_ok());
 /// # }
 /// ```
 pub async fn connect_live_measurement(config: &AccessConfig) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
