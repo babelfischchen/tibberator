@@ -666,7 +666,7 @@ where
 ///
 /// ## Example Usage
 ///
-/// ```
+/// ```no_run
 ///   use tibberator::tibber::{AccessConfig, fetch_home_data};
 ///
 /// # #[tokio::main]
@@ -868,7 +868,7 @@ async fn create_websocket(
 ///
 /// # Example
 ///
-/// ```
+/// ```no_run
 ///   use tibberator::tibber::{AccessConfig, get_home_ids};
 ///
 /// # #[tokio::main]
@@ -1252,7 +1252,7 @@ pub async fn get_cost_last_30_days(
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use tibberator::tibber::AccessConfig;
 /// use tibberator::tibber::get_cost_last_12_months;
 ///
@@ -1345,7 +1345,7 @@ pub async fn get_cost_last_12_months(
 /// This function returns an error if the HTTP request fails or if the response cannot be parsed.
 ///
 /// # Example
-/// ```rust
+/// ```no_run
 /// use tibberator::tibber::{get_cost_all_years, AccessConfig};
 ///
 /// #[tokio::main]
@@ -1610,7 +1610,7 @@ async fn get_last_consumption_pages(
 /// * `Err(Box<dyn std::error::Error>)` - An error if there's an issue with the fetch operation.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// use tibberator::tibber::{AccessConfig, get_cost_data_today};
 ///
 /// # #[tokio::main]

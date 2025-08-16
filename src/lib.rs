@@ -188,7 +188,7 @@ pub mod tibber {
     /// - `false`: Indicates that no shutdown request was received within the timeout.
     ///
     /// ## Example
-    /// ```rust
+    /// ```no_run
     ///   use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
     ///   use std::time::Duration;
     ///   use tibberator::tibber::check_user_shutdown;
@@ -230,7 +230,7 @@ pub mod tibber {
     /// - `Err(LoopEndingError::InvalidData)`: Indicates no valid data received during the loop.
     ///
     /// ## Example
-    /// ```rust
+    /// ```no_run
     ///   use tibberator::tibber::{
     ///                            tui::AppState,
     ///                            Config, loop_for_data_with_provider,
@@ -419,28 +419,28 @@ pub mod tibber {
     ///   - `Err(e)` if an error occurs during the fetch operation.
     ///
     /// # Examples
-    /// ```rust
+    /// ```no_run
     /// use tibberator::html_logger::LogConfig;
     /// use tibberator::tibber::{output::{self, GuiMode, OutputConfig, OutputType, DisplayMode}, AccessConfig, Config, fetch_display_data_with_provider, RealTibberDataProvider};
     /// use chrono::FixedOffset;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let mut config = Config::default();
-    ///     config.output.display_mode = DisplayMode::Consumption;  // Use a supported display mode
-    ///     let estimated_daily_fee = Some(10.5);
-    ///     let provider = RealTibberDataProvider;
-    ///
-    ///     match fetch_display_data_with_provider(&provider, &config.access, &config.output.display_mode, &estimated_daily_fee).await {
-    ///         Ok(Some((prices, consumption_data, timestamp))) => {
-    ///             println!("Prices: {:?}", prices);
-    ///             println!("Consumption Data: {:?}", consumption_data);
-    ///             println!("Timestamp: {:?}", timestamp);
-    ///         }
-    ///         Ok(None) => println!("No data available."),
-    ///         Err(e) => eprintln!("Error fetching display data: {}", e),
-    ///     }
-    /// }
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// #    let mut config = Config::default();
+    /// #    config.output.display_mode = DisplayMode::Consumption;  // Use a supported display mode
+    /// #    let estimated_daily_fee = Some(10.5);
+    /// #    let provider = RealTibberDataProvider;
+    /// #
+    /// #    match fetch_display_data_with_provider(&provider, &config.access, &config.output.display_mode, &estimated_daily_fee).await {
+    /// #        Ok(Some((prices, consumption_data, timestamp))) => {
+    /// #            println!("Prices: {:?}", prices);
+    /// #            println!("Consumption Data: {:?}", consumption_data);
+    /// #            println!("Timestamp: {:?}", timestamp);
+    /// #        }
+    /// #        Ok(None) => println!("No data available."),
+    /// #        Err(e) => eprintln!("Error fetching display data: {}", e),
+    /// #    }
+    /// # }
     /// ```
     pub async fn fetch_display_data_with_provider(
         provider: &dyn TibberDataProvider,
