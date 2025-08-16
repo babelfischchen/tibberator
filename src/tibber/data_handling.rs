@@ -100,7 +100,7 @@ struct ConsumptionPageInfo;
 struct FeeEstimation;
 
 #[derive(Debug)]
-enum EnergyResolution {
+pub enum EnergyResolution {
     Hourly,
     Daily,
     Monthly,
@@ -923,7 +923,7 @@ pub async fn get_home_ids(
 ///
 async fn get_current_energy_price(
     config: &AccessConfig,
-) -> Result<PriceInfo, Box<dyn std::error::Error>> {
+) -> Result<PriceInfo, Box<dyn std::error::Error + Send + Sync>> {
     info!(target: "tibberator.price", "Fetching current energy price.");
 
     let id = config.home_id.to_owned();
@@ -1099,7 +1099,7 @@ async fn get_consumption_page_info(
     n: i64,
     cursor: Option<String>,
     energy_resolution: EnergyResolution,
-) -> Result<ConsumptionPage, Box<dyn std::error::Error>> {
+) -> Result<ConsumptionPage, Box<dyn std::error::Error + Send + Sync>> {
     info!(target: "tibberator.page_info", "Fetching page info for the last {} {:?} data.", n, energy_resolution);
 
     let id = access_config.home_id.to_owned();
@@ -1173,7 +1173,7 @@ async fn get_consumption_page_info(
 /// ```
 pub async fn get_consumption_data_today(
     access_config: &AccessConfig,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
     match get_todays_energy_consumption(&access_config).await {
         Ok(consumption) => {
             let time = Local::now()
@@ -1200,7 +1200,7 @@ pub async fn get_consumption_data_today(
 pub async fn get_cost_last_30_days(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
     match get_last_n_days_energy_consumption(&access_config, 30).await {
         Ok(consumption) => {
             let time = consumption.last().ok_or(LoopEndingError::InvalidData)?.to
@@ -1275,7 +1275,7 @@ pub async fn get_cost_last_30_days(
 pub async fn get_cost_last_12_months(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
     // Get the last 11 months consumption data
 
     let mut cursor = None;
@@ -1326,6 +1326,165 @@ pub async fn get_cost_last_12_months(
     )))
 }
 
+/// Trait for providing consumption page data and related cost data
+#[async_trait::async_trait]
+pub trait ConsumptionPageProvider: Send + Sync {
+    /// Fetches the consumption page information for the last `n` data points at the specified energy resolution.
+    async fn get_consumption_page_info(
+        &self,
+        access_config: &AccessConfig,
+        n: i64,
+        cursor: Option<String>,
+        energy_resolution: EnergyResolution,
+    ) -> Result<ConsumptionPage, Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Fetches the cost data for the last 12 months.
+    async fn get_cost_last_12_months(
+        &self,
+        access_config: &AccessConfig,
+        estimated_daily_fee: &Option<f64>,
+    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>>;
+    
+    /// Estimates the daily fees.
+    async fn estimate_daily_fees(
+        &self,
+        access_config: &AccessConfig,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Real implementation of ConsumptionPageProvider
+pub struct RealConsumptionPageProvider;
+
+#[async_trait::async_trait]
+impl ConsumptionPageProvider for RealConsumptionPageProvider {
+    async fn get_consumption_page_info(
+        &self,
+        access_config: &AccessConfig,
+        n: i64,
+        cursor: Option<String>,
+        energy_resolution: EnergyResolution,
+    ) -> Result<ConsumptionPage, Box<dyn std::error::Error + Send + Sync>> {
+        // Call the existing function
+        get_consumption_page_info(access_config, n, cursor, energy_resolution).await
+    }
+    
+    async fn get_cost_last_12_months(
+        &self,
+        access_config: &AccessConfig,
+        estimated_daily_fee: &Option<f64>,
+    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+        // Call the existing function
+        get_cost_last_12_months(access_config, estimated_daily_fee).await
+    }
+    
+    async fn estimate_daily_fees(
+        &self,
+        access_config: &AccessConfig,
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
+        // Call the existing function
+        estimate_daily_fees(access_config).await
+    }
+}
+
+/// Retrieves the cost data for all years, including an estimate for the current year based on daily consumption.
+///
+/// This function fetches consumption data in yearly resolution and calculates the total cost for each year.
+/// For the current year, it also considers the estimated daily fee to provide a more accurate estimate.
+///
+/// # Arguments
+/// * `provider` - A reference to a ConsumptionPageProvider implementation for fetching data.
+/// * `access_config` - A reference to the AccessConfig struct containing configuration settings.
+/// * `estimated_daily_fee` - An optional reference to a floating-point number representing the estimated daily cost.
+///
+/// # Returns
+/// A Result containing an Option with a tuple of:
+/// - A vector of f64 representing the yearly costs.
+/// - A String describing the type of data (e.g., "Yearly Cost [EUR]").
+/// - A DateTime<FixedOffset> representing the time when the data was last updated.
+///
+/// # Errors
+/// This function returns an error if the HTTP request fails or if the response cannot be parsed.
+///
+/// # Example
+/// ```no_run
+/// use tibberator::tibber::{get_cost_all_years_with_provider, AccessConfig, RealConsumptionPageProvider};
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let provider = RealConsumptionPageProvider;
+///     let config = AccessConfig::default();
+///     let estimated_fee = Some(10.5); // Example estimated daily fee
+///
+///     match get_cost_all_years_with_provider(&provider, &config, &estimated_fee).await {
+///         Ok(Some((yearly_costs, description, time))) => {
+///             println!("Yearly Costs: {:?}", yearly_costs);
+///             println!("Description: {}", description);
+///             println!("Last Updated: {}", time);
+///         }
+///         Ok(None) => println!("No data available."),
+///         Err(e) => eprintln!("Error retrieving cost all years: {}", e),
+///     }
+/// }
+/// ```
+pub async fn get_cost_all_years_with_provider(
+    provider: &dyn ConsumptionPageProvider,
+    access_config: &AccessConfig,
+    estimated_daily_fee: &Option<f64>,
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+    info!(target: "tibberator.consumption", "Retrieving cost all years...");
+
+    let mut cursor = None;
+    let mut yearly_nodes = Vec::new();
+    let mut has_previous_page = true;
+
+    while has_previous_page {
+        let page_info = provider
+            .get_consumption_page_info(access_config, 1, cursor, EnergyResolution::Yearly)
+            .await?;
+
+        cursor = Some(page_info.start_cursor);
+        let count = page_info.count;
+
+        if count == 0 && cursor.as_ref().unwrap().is_empty() && !page_info.has_previous_page {
+            break;
+        }
+
+        yearly_nodes.push(page_info.total_cost);
+        has_previous_page = page_info.has_previous_page;
+    }
+    yearly_nodes.reverse();
+
+    // Fetch the cost for the last 12 months
+    let monthly_data = provider.get_cost_last_12_months(access_config, estimated_daily_fee).await?;
+
+    if let Some((monthly_costs, _, _)) = monthly_data {
+        let current_month = Local::now().month() as usize;
+
+        // Sum the appropriate number of monthly costs based on the current month
+        let mut total_cost_for_current_year = 0.0;
+        for i in (monthly_costs.len() - current_month)..monthly_costs.len() {
+            total_cost_for_current_year += monthly_costs[i];
+        }
+
+        yearly_nodes.push(total_cost_for_current_year);
+    }
+
+    let time = Local::now()
+        .with_hour(0)
+        .and_then(|t| t.with_minute(0))
+        .and_then(|t| t.with_second(0))
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(Local::now())
+        .fixed_offset()
+        + chrono::Duration::days(1);
+
+    Ok(Some((
+        yearly_nodes,
+        String::from("Yearly Cost [EUR]"),
+        time,
+    )))
+}
+
 /// Retrieves the cost data for all years, including an estimate for the current year based on daily consumption.
 ///
 /// This function fetches consumption data in yearly resolution and calculates the total cost for each year.
@@ -1367,58 +1526,9 @@ pub async fn get_cost_last_12_months(
 pub async fn get_cost_all_years(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
-    info!(target: "tibberator.consumption", "Retrieving cost all years...");
-
-    let mut cursor = None;
-    let mut yearly_nodes = Vec::new();
-    let mut has_previous_page = true;
-
-    while has_previous_page {
-        let page_info =
-            get_consumption_page_info(access_config, 1, cursor, EnergyResolution::Yearly).await?;
-
-        cursor = Some(page_info.start_cursor);
-        let count = page_info.count;
-
-        if count == 0 && cursor.as_ref().unwrap().is_empty() && !page_info.has_previous_page {
-            break;
-        }
-
-        yearly_nodes.push(page_info.total_cost);
-        has_previous_page = page_info.has_previous_page;
-    }
-    yearly_nodes.reverse();
-
-    // Fetch the cost for the last 12 months
-    let monthly_data = get_cost_last_12_months(access_config, estimated_daily_fee).await?;
-
-    if let Some((monthly_costs, _, _)) = monthly_data {
-        let current_month = Local::now().month() as usize;
-
-        // Sum the appropriate number of monthly costs based on the current month
-        let mut total_cost_for_current_year = 0.0;
-        for i in (monthly_costs.len() - current_month)..monthly_costs.len() {
-            total_cost_for_current_year += monthly_costs[i];
-        }
-
-        yearly_nodes.push(total_cost_for_current_year);
-    }
-
-    let time = Local::now()
-        .with_hour(0)
-        .and_then(|t| t.with_minute(0))
-        .and_then(|t| t.with_second(0))
-        .and_then(|t| t.with_nanosecond(0))
-        .unwrap_or(Local::now())
-        .fixed_offset()
-        + chrono::Duration::days(1);
-
-    Ok(Some((
-        yearly_nodes,
-        String::from("Yearly Cost [EUR]"),
-        time,
-    )))
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+    let provider = RealConsumptionPageProvider;
+    get_cost_all_years_with_provider(&provider, access_config, estimated_daily_fee).await
 }
 
 /// Fetches the current day's and tomorrows energy prices from Tibber API.
@@ -1435,7 +1545,7 @@ pub async fn get_cost_all_years(
 ///
 pub async fn get_prices_today_tomorrow(
     access_config: &AccessConfig,
-) -> Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+) -> Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
     match get_hourly_energy_prices(access_config).await {
         Ok((today_prices, tomorrow_prices)) => {
             // Calculate expiration time based on last today price
@@ -1477,7 +1587,7 @@ pub async fn get_prices_today_tomorrow(
 pub async fn update_current_energy_price_info(
     config: &AccessConfig,
     current_price_info: Option<PriceInfo>,
-) -> Result<PriceInfo, Box<dyn std::error::Error>> {
+) -> Result<PriceInfo, Box<dyn std::error::Error + Send + Sync>> {
     match current_price_info {
         Some(price_info) => {
             let datetime_now = Utc::now();
@@ -1627,7 +1737,7 @@ async fn get_last_consumption_pages(
 pub async fn get_cost_data_today(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
     let current_hour = Local::now().hour() as usize;
     
     // Special case: when current_hour is 0 (midnight), we haven't completed any hours yet
@@ -1699,13 +1809,13 @@ pub async fn get_cost_data_today(
 ///
 /// # Returns
 ///
-/// * `Result<Option<f64>, Box<dyn std::error::Error>>`
+/// * `Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>>`
 ///   - `Ok(Some(f64))`: The estimated daily fee if it could be calculated successfully.
 ///   - `Ok(None)`: If no price data is available or the calculation fails for some reason.
-///   - `Err(Box<dyn std::error::Error>)`: An error occurred while fetching or processing the data.
+///   - `Err(Box<dyn std::error::Error + Send + Sync>)`: An error occurred while fetching or processing the data.
 pub async fn estimate_daily_fees(
     config: &AccessConfig,
-) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
     info!(target: "tibberator.price", "Estimating daily fees");
     let id = config.home_id.to_owned();
     let variables = fee_estimation::Variables { id };
@@ -1753,7 +1863,10 @@ pub async fn estimate_daily_fees(
     match fee_estimation_data.page_info.total_cost {
         Some(cost) => {
             let daily_fee = (cost - price_excluding_fees) / days_last_month as f64;
-            info!(target: "tibberator.price", "Estimated daily fee: {} {}", daily_fee, fee_estimation_data.page_info.currency.unwrap_or_default());
+            info!(target: "tibberator.price", "Estimated daily fee: {} {}",
+                daily_fee,
+                fee_estimation_data.page_info.currency.clone().unwrap_or_default()
+            );
             Ok(Some(daily_fee))
         }
         None => {
@@ -1858,7 +1971,7 @@ async fn get_live_measurement(
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 ///   use tibberator::tibber::{AccessConfig, connect_live_measurement};
 ///
 /// # #[tokio::main]

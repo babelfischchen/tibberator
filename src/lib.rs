@@ -28,49 +28,64 @@ pub mod tibber {
     use crate::html_logger::LogConfig;
 
     // Add trait definition for TibberDataProvider
-    #[async_trait]
+    #[async_trait::async_trait]
     pub trait TibberDataProvider {
         async fn get_consumption_data_today(
             &self,
             config: &AccessConfig,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        >;
 
         async fn get_cost_data_today(
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        >;
 
         async fn get_cost_last_30_days(
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        >;
 
         async fn get_cost_last_12_months(
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        >;
 
         async fn get_cost_all_years(
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>;
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        >;
 
         async fn get_prices_today_tomorrow(
             &self,
             config: &AccessConfig,
         ) -> Result<
             Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
-            Box<dyn std::error::Error>,
+            Box<dyn std::error::Error + Send + Sync>,
         >;
 
         async fn estimate_daily_fees(
             &self,
             config: &AccessConfig,
-        ) -> Result<Option<f64>, Box<dyn std::error::Error>>;
+        ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>>;
 
         async fn connect_live_measurement(
             &self,
@@ -86,8 +101,10 @@ pub mod tibber {
         async fn get_consumption_data_today(
             &self,
             config: &AccessConfig,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
-        {
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
             get_consumption_data_today(config).await
         }
 
@@ -95,8 +112,10 @@ pub mod tibber {
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
-        {
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
             get_cost_data_today(config, estimated_daily_fee).await
         }
 
@@ -104,8 +123,10 @@ pub mod tibber {
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
-        {
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
             get_cost_last_30_days(config, estimated_daily_fee).await
         }
 
@@ -113,8 +134,10 @@ pub mod tibber {
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
-        {
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
             get_cost_last_12_months(config, estimated_daily_fee).await
         }
 
@@ -122,8 +145,10 @@ pub mod tibber {
             &self,
             config: &AccessConfig,
             estimated_daily_fee: &Option<f64>,
-        ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>>
-        {
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
             get_cost_all_years(config, estimated_daily_fee).await
         }
 
@@ -132,7 +157,7 @@ pub mod tibber {
             config: &AccessConfig,
         ) -> Result<
             Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
-            Box<dyn std::error::Error>,
+            Box<dyn std::error::Error + Send + Sync>,
         > {
             get_prices_today_tomorrow(config).await
         }
@@ -140,7 +165,7 @@ pub mod tibber {
         async fn estimate_daily_fees(
             &self,
             config: &AccessConfig,
-        ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+        ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
             estimate_daily_fees(config).await
         }
 
@@ -264,7 +289,7 @@ pub mod tibber {
         subscription: &mut LiveMeasurementSubscription,
         app_state: Arc<Mutex<AppState>>,
         provider: &dyn TibberDataProvider,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let last_value_received = Rc::new(Cell::new(Instant::now()));
         let stop_fun = future::poll_fn(|_cx| {
             if app_state.lock().unwrap().should_quit {
@@ -447,7 +472,10 @@ pub mod tibber {
         access_config: &AccessConfig,
         display_mode: &DisplayMode,
         estimated_daily_fee: &Option<f64>,
-    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error>> {
+    ) -> Result<
+        Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         match display_mode {
             output::DisplayMode::Consumption => {
                 provider.get_consumption_data_today(access_config).await
@@ -499,7 +527,7 @@ pub mod tibber {
         access_config: &AccessConfig,
     ) -> Result<
         Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
-        Box<dyn std::error::Error>,
+        Box<dyn std::error::Error + Send + Sync>,
     > {
         get_prices_today_tomorrow(access_config).await
     }
@@ -524,7 +552,7 @@ pub mod tibber {
     pub async fn estimate_daily_fees_with_provider(
         provider: &dyn TibberDataProvider,
         config: &AccessConfig,
-    ) -> Result<Option<f64>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
         provider.estimate_daily_fees(config).await
     }
 }

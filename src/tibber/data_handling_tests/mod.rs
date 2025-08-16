@@ -6,6 +6,94 @@ mod tests {
     use serial_test::serial;
     use tokio::time::{timeout, Duration as TokioDuration};
 
+    struct MockConsumptionPageProvider;
+
+    #[async_trait::async_trait]
+    impl ConsumptionPageProvider for MockConsumptionPageProvider {
+        async fn get_consumption_page_info(
+            &self,
+            _access_config: &AccessConfig,
+            _n: i64,
+            cursor: Option<String>,
+            energy_resolution: EnergyResolution,
+        ) -> Result<ConsumptionPage, Box<dyn std::error::Error + Send + Sync>> {
+            // Create mock data based on the parameters
+            let (start_cursor, has_previous_page, count, total_cost, total_consumption) =
+                match energy_resolution {
+                    EnergyResolution::Yearly => {
+                        match cursor.as_deref() {
+                            None => {
+                                // First page - most recent year
+                                ("cursor3".to_string(), true, 1, 30000.0, 3000.0)
+                            }
+                            Some("cursor3") => {
+                                // Second page
+                                ("cursor2".to_string(), true, 1, 20000.0, 2000.0)
+                            }
+                            Some("cursor2") => {
+                                // Third page
+                                ("cursor1".to_string(), false, 1, 10000.0, 1000.0)
+                            }
+                            _ => {
+                                // No more pages
+                                ("".to_string(), false, 0, 0.0, 0.0)
+                            }
+                        }
+                    }
+                    _ => {
+                        // For other resolutions, return default mock data
+                        ("".to_string(), false, 1, 100.0, 10.0)
+                    }
+                };
+
+            Ok(ConsumptionPage {
+                start_cursor,
+                has_previous_page,
+                count,
+                total_cost,
+                total_consumption,
+                currency: "EUR".to_string(),
+            })
+        }
+
+        async fn get_cost_last_12_months(
+            &self,
+            _access_config: &AccessConfig,
+            _estimated_daily_fee: &Option<f64>,
+        ) -> Result<
+            Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+            Box<dyn std::error::Error + Send + Sync>,
+        > {
+            // Return mock monthly costs for the last 12 months
+            // Let's say we're in the 6th month of the year, so we have data for 6 months
+            let monthly_costs = vec![
+                100.0, 200.0, 300.0, 400.0, 500.0, 600.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ];
+
+            let time = Local::now()
+                .with_hour(0)
+                .and_then(|t| t.with_minute(0))
+                .and_then(|t| t.with_second(0))
+                .and_then(|t| t.with_nanosecond(0))
+                .unwrap_or(Local::now())
+                .fixed_offset()
+                + chrono::Duration::days(1);
+
+            Ok(Some((
+                monthly_costs,
+                String::from("Monthly Cost [EUR]"),
+                time,
+            )))
+        }
+
+        async fn estimate_daily_fees(
+            &self,
+            _access_config: &AccessConfig,
+        ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(Some(24.5))
+        }
+    }
+
     #[tokio::test]
     async fn test_fetch_data() {
         let config = AccessConfig::default();
@@ -208,40 +296,52 @@ mod tests {
         assert!(estimated_fee.unwrap() >= 0.0);
     }
 
+    // This test uses a mock provider instead of making real API calls
+    // to avoid rate limiting issues while still testing the logic
     #[tokio::test]
     async fn test_get_cost_all_years() {
-        let config = AccessConfig::default();
-        let estimated_daily_fee = None; // You can set this to an actual value if needed
+        use crate::tibber::data_handling::get_cost_all_years_with_provider;
 
-        tokio::time::sleep(TokioDuration::from_secs(25)).await;
-        let result = get_cost_all_years(&config, &estimated_daily_fee).await;
+        let mock_provider = MockConsumptionPageProvider;
+        let config = AccessConfig::default();
+        let estimated_daily_fee = Some(24.5); // Using mock fee value
+
+        let result =
+            get_cost_all_years_with_provider(&mock_provider, &config, &estimated_daily_fee).await;
+
         assert!(result.is_ok());
 
-        let (yearly_nodes, description, time) = result.unwrap().unwrap();
-        assert_eq!(description, "Yearly Cost [EUR]");
+        let data = result.unwrap();
+        assert!(data.is_some());
 
-        let reference_time = Local::now()
-            .with_day(1)
-            .and_then(|t| t.with_month(1))
-            .unwrap()
-            .fixed_offset();
-        assert!(time > reference_time, "Time should not be zero");
-        assert!(!yearly_nodes.is_empty());
+        let (yearly_costs, description, _time) = data.unwrap();
+        // Based on our mock data:
+        // - Three previous years: 10000.0, 20000.0, 30000.0
+        // - Current year: Sum of last 8 months from mock data 
+        //   (indices 4-11: 500.0 + 600.0 + 0.0 + 0.0 + 0.0 + 0.0 + 0.0 + 0.0 = 1100.0)
+        let expected_costs = vec![10000.0, 20000.0, 30000.0, 1100.0];
+
+        assert_eq!(yearly_costs, expected_costs);
+        assert_eq!(description, "Yearly Cost [EUR]");
     }
 
     #[tokio::test]
     async fn test_price_info_invalid_data() {
         // Test that PriceInfo parsing returns None when data is missing or malformed
-        let invalid_data = price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent {
-            total: None,
-            energy: None,
-            tax: None,
-            starts_at: None,
-            currency: String::from("EUR"),
-            level: Some(price_current::PriceLevel::NORMAL),
-        };
+        let invalid_data =
+            price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent {
+                total: None,
+                energy: None,
+                tax: None,
+                starts_at: None,
+                currency: String::from("EUR"),
+                level: Some(price_current::PriceLevel::NORMAL),
+            };
 
         let result = PriceInfo::new_current(invalid_data);
-        assert!(result.is_none(), "Parsing should return None for invalid data");
+        assert!(
+            result.is_none(),
+            "Parsing should return None for invalid data"
+        );
     }
 }
