@@ -1,6 +1,8 @@
 /target
 /Cargo.lock
 /.vscode
+/.clinerules
+QWEN.md
 .aider*
 *.bat
 .env
