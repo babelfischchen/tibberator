@@ -86,12 +86,6 @@ mod tests {
             )))
         }
 
-        async fn estimate_daily_fees(
-            &self,
-            _access_config: &AccessConfig,
-        ) -> Result<Option<f64>, Box<dyn std::error::Error + Send + Sync>> {
-            Ok(Some(24.5))
-        }
     }
 
     #[tokio::test]

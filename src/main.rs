@@ -100,6 +100,15 @@ async fn main() -> ExitCode {
         std::process::exit(exitcode::DATAERR)
     }
 
+    if !block_on(check_real_time_subscription_enabled(&config.access)) {
+        eprintln!("Real-time subscription is not enabled for the specified home");
+        eprintln!("Please enable real-time consumption in your Tibber app settings");
+        println!("Press Enter to continue...");
+
+        let _ = stdin().read(&mut [0u8]).unwrap();
+        std::process::exit(exitcode::DATAERR)
+    }
+
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let file_name = format!("app_log_{}.html", timestamp);
     let file_path = home_dir()
@@ -294,6 +303,26 @@ async fn check_home_id(access_config: &AccessConfig) -> bool {
         Ok(home_ids) => home_ids.contains(&access_config.home_id),
         Err(error) => {
             eprintln!("{:?}", error);
+            println!("Press Enter to continue...");
+            let _ = stdin().read(&mut [0u8]).unwrap();
+            std::process::exit(exitcode::DATAERR);
+        }
+    }
+}
+
+/// Checks if real-time subscription is enabled for the given home.
+///
+/// # Arguments
+/// - `access_config`: A reference to an `AccessConfig` containing the necessary configuration.
+///
+/// # Returns
+/// - `true` if real-time subscription is enabled, otherwise `false`.
+///
+async fn check_real_time_subscription_enabled(access_config: &AccessConfig) -> bool {
+    match tibberator::tibber::check_real_time_subscription(access_config).await {
+        Ok(is_enabled) => is_enabled,
+        Err(error) => {
+            eprintln!("Error checking real-time subscription: {:?}", error);
             println!("Press Enter to continue...");
             let _ = stdin().read(&mut [0u8]).unwrap();
             std::process::exit(exitcode::DATAERR);
@@ -1085,5 +1114,13 @@ mod tests {
         assert!(check_home_id(&config.access).await);
         config.access.home_id.pop();
         assert!(!check_home_id(&config.access).await);
+    }
+
+    #[tokio::test]
+    async fn test_check_real_time_subscription_enabled() {
+        let config = get_test_config();
+        // This test will depend on the actual test configuration
+        // It should pass if the test home has real-time subscription enabled
+        assert!(check_real_time_subscription_enabled(&config.access).await);
     }
 }

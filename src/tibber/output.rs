@@ -2,7 +2,8 @@
 #[path = "output_tests/mod.rs"]
 mod output_tests;
 
-use crate::tibber::{live_measurement, PriceInfo};
+use crate::tibber::data_handling::live_measurement;
+use crate::tibber::data_types::PriceInfo;
 use chrono::{DateTime, FixedOffset, Local, Timelike};
 use crossterm::{
     cursor, execute, queue,

@@ -11,7 +11,9 @@ use ratatui::text::Line;
 use ratatui::widgets::*;
 
 use crate::tibber::output::DisplayMode;
-use crate::tibber::{cache_expired, live_measurement, PriceInfo};
+use crate::tibber::cache_expired;
+use crate::tibber::data_handling::live_measurement;
+use crate::tibber::data_types::PriceInfo;
 
 /// Represents the application state
 #[derive(Debug)]

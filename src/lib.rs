@@ -21,11 +21,24 @@ pub mod tibber {
         time::Instant,
     };
 
-    pub use data_handling::*;
-    use output::{print_screen, DisplayMode, OutputConfig};
-    use tui::AppState;
-
+    // Import specific items from data_handling and data_types that are needed
+    pub use crate::tibber::data_handling::{
+        connect_live_measurement,
+        LiveMeasurementSubscription,
+        LiveMeasurementOperation,
+        get_consumption_data_today, get_cost_data_today, get_cost_last_30_days,
+        get_cost_last_12_months, get_cost_all_years, get_prices_today_tomorrow,
+        estimate_daily_fees, update_current_energy_price_info, get_home_ids,
+        check_real_time_subscription,
+        live_measurement,
+    };
+    pub use crate::tibber::data_types::{
+        AccessConfig, LoopEndingError, PriceInfo,
+    };
+    pub use crate::tibber::output::{OutputConfig as OutputConfigType};
+    pub use crate::tibber::tui::AppState;
     use crate::html_logger::LogConfig;
+    use output::{print_screen, DisplayMode};
 
     // Add trait definition for TibberDataProvider
     #[async_trait::async_trait]
@@ -178,13 +191,14 @@ pub mod tibber {
     }
 
     mod data_handling;
+    mod data_types;
     pub mod output;
     pub mod tui;
 
     #[derive(Debug, Serialize, Deserialize)]
     pub struct Config {
         pub access: AccessConfig,
-        pub output: OutputConfig,
+        pub output: OutputConfigType,
         pub logging: LogConfig,
     }
 
@@ -192,7 +206,7 @@ pub mod tibber {
         fn default() -> Self {
             Config {
                 access: AccessConfig::default(),
-                output: OutputConfig::default(),
+                output: OutputConfigType::default(),
                 logging: LogConfig::default(),
             }
         }
