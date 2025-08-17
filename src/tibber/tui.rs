@@ -10,10 +10,10 @@ use ratatui::prelude::*;
 use ratatui::text::Line;
 use ratatui::widgets::*;
 
-use crate::tibber::output::DisplayMode;
 use crate::tibber::cache_expired;
 use crate::tibber::data_handling::live_measurement;
 use crate::tibber::data_types::PriceInfo;
+use crate::tibber::output::DisplayMode;
 
 /// Represents the application state
 #[derive(Debug)]

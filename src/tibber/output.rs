@@ -101,14 +101,12 @@ pub enum GuiMode {
     Advanced,
 }
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct OutputConfig {
     output_type: OutputType,
     tax_style: TaxStyle,
     pub display_mode: DisplayMode,
     pub gui_mode: GuiMode,
-
 }
 
 /// The `Default` implementation for `OutputConfig` provides a default instance of `OutputConfig` with `output_type` as `Full`, `tax_style` as `Price`, and `display_mode` as `Prices`.

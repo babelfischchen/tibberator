@@ -20,11 +20,14 @@ use reqwest::{
 use std::str::FromStr;
 use tokio::time::timeout;
 
-// Import types from the new data_types module
+use crate::tibber::data_types::{
+    consumption, consumption_hourly_page_info, consumption_page_info, price_current, price_hourly,
+    Consumption, ConsumptionHourlyPageInfo, ConsumptionPageInfo, PriceCurrent, PriceHourly,
+};
 pub use crate::tibber::data_types::{
-    AccessConfig, EnergyResolution, LoopEndingError, PriceLevel, PriceInfo, 
-    ConsumptionPage, ConsumptionNode, ConsumptionPageProvider,
-    PriceInfoFields, ConsumptionPageInfoFields
+    AccessConfig, ConsumptionNode, ConsumptionPage, ConsumptionPageInfoFields,
+    ConsumptionPageProvider, EnergyResolution, LoopEndingError, PriceInfo, PriceInfoFields,
+    PriceLevel,
 };
 
 /// `Home` is a struct that represents a GraphQL query for the `home` endpoint.
@@ -43,7 +46,7 @@ struct Home;
     query_path = "tibber/view.graphql",
     response_derives = "Debug"
 )]
-pub struct Viewer;
+struct Viewer;
 
 /// `LiveMeasurement` is a struct that represents a GraphQL query for the `live_measurement` endpoint.
 #[derive(GraphQLQuery)]
@@ -54,54 +57,13 @@ pub struct Viewer;
 )]
 pub struct LiveMeasurement;
 
-/// `PriceCurrent` is a struct that represents a GraphQL query for the `price_current` endpoint.
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "tibber/schema.json",
-    query_path = "tibber/price_current.graphql",
-    response_derives = "Debug"
-)]
-pub struct PriceCurrent;
-
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "tibber/schema.json",
-    query_path = "tibber/price_hourly.graphql",
-    response_derives = "Debug"
-)]
-pub struct PriceHourly;
-
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "tibber/schema.json",
-    query_path = "tibber/consumption_hourly.graphql",
-    response_derives = "Debug"
-)]
-pub struct Consumption;
-
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "tibber/schema.json",
-    query_path = "tibber/consumption_hourly_page_info.graphql",
-    response_derives = "Debug"
-)]
-pub struct ConsumptionHourlyPageInfo;
-
-#[derive(GraphQLQuery)]
-#[graphql(
-    schema_path = "tibber/schema.json",
-    query_path = "tibber/consumption_page_info.graphql",
-    response_derives = "Debug"
-)]
-pub struct ConsumptionPageInfo;
-
 #[derive(GraphQLQuery)]
 #[graphql(
     schema_path = "tibber/schema.json",
     query_path = "tibber/fee_estimation.graphql",
     response_derives = "Debug"
 )]
-pub struct FeeEstimation;
+struct FeeEstimation;
 
 /// Real implementation of ConsumptionPageProvider
 pub struct RealConsumptionPageProvider;
@@ -118,149 +80,17 @@ impl ConsumptionPageProvider for RealConsumptionPageProvider {
         // Call the existing function
         get_consumption_page_info(access_config, n, cursor, energy_resolution).await
     }
-    
+
     async fn get_cost_last_12_months(
         &self,
         access_config: &AccessConfig,
         estimated_daily_fee: &Option<f64>,
-    ) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<
+        Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         // Call the existing function
         get_cost_last_12_months(access_config, estimated_daily_fee).await
-    }
-}
-
-// Trait implementations for PriceInfoFields
-impl PriceInfoFields for price_current::PriceCurrentViewerHomeCurrentSubscriptionPriceInfoCurrent {
-    fn total(&self) -> Option<f64> {
-        self.total
-    }
-    fn energy(&self) -> Option<f64> {
-        self.energy
-    }
-    fn tax(&self) -> Option<f64> {
-        self.tax
-    }
-    fn starts_at(&self) -> Option<String> {
-        self.starts_at.clone()
-    }
-    fn level(&self) -> PriceLevel {
-        match &self.level {
-            Some(price_current::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
-            Some(price_current::PriceLevel::CHEAP) => PriceLevel::Cheap,
-            Some(price_current::PriceLevel::NORMAL) => PriceLevel::Normal,
-            Some(price_current::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
-            Some(price_current::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
-            Some(price_current::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
-            _ => PriceLevel::None,
-        }
-    }
-    fn currency(&self) -> String {
-        self.currency.clone()
-    }
-}
-
-impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoToday {
-    fn total(&self) -> Option<f64> {
-        self.total
-    }
-    fn energy(&self) -> Option<f64> {
-        self.energy
-    }
-    fn tax(&self) -> Option<f64> {
-        self.tax
-    }
-    fn starts_at(&self) -> Option<String> {
-        self.starts_at.clone()
-    }
-    fn level(&self) -> PriceLevel {
-        match &self.level {
-            Some(price_hourly::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
-            Some(price_hourly::PriceLevel::CHEAP) => PriceLevel::Cheap,
-            Some(price_hourly::PriceLevel::NORMAL) => PriceLevel::Normal,
-            Some(price_hourly::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
-            Some(price_hourly::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
-            Some(price_hourly::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
-            _ => PriceLevel::None,
-        }
-    }
-    fn currency(&self) -> String {
-        self.currency.clone()
-    }
-}
-
-impl PriceInfoFields for price_hourly::PriceHourlyViewerHomeCurrentSubscriptionPriceInfoTomorrow {
-    fn total(&self) -> Option<f64> {
-        self.total
-    }
-    fn energy(&self) -> Option<f64> {
-        self.energy
-    }
-    fn tax(&self) -> Option<f64> {
-        self.tax
-    }
-    fn starts_at(&self) -> Option<String> {
-        self.starts_at.clone()
-    }
-    fn level(&self) -> PriceLevel {
-        match &self.level {
-            Some(price_hourly::PriceLevel::VERY_CHEAP) => PriceLevel::VeryCheap,
-            Some(price_hourly::PriceLevel::CHEAP) => PriceLevel::Cheap,
-            Some(price_hourly::PriceLevel::NORMAL) => PriceLevel::Normal,
-            Some(price_hourly::PriceLevel::EXPENSIVE) => PriceLevel::Expensive,
-            Some(price_hourly::PriceLevel::VERY_EXPENSIVE) => PriceLevel::VeryExpensive,
-            Some(price_hourly::PriceLevel::Other(string)) => PriceLevel::Other(string.clone()),
-            _ => PriceLevel::None,
-        }
-    }
-    fn currency(&self) -> String {
-        self.currency.clone()
-    }
-}
-
-// Trait implementations for ConsumptionPageInfoFields
-impl ConsumptionPageInfoFields
-    for consumption_page_info::ConsumptionPageInfoViewerHomeConsumptionPageInfo
-{
-    fn start_cursor(&self) -> Option<String> {
-        self.start_cursor.clone()
-    }
-    fn has_previous_page(&self) -> bool {
-        self.has_previous_page.unwrap()
-    }
-    fn count(&self) -> usize {
-        self.count.unwrap() as usize
-    }
-    fn total_cost(&self) -> Option<f64> {
-        self.total_cost
-    }
-    fn total_consumption(&self) -> Option<f64> {
-        self.total_consumption
-    }
-    fn currency(&self) -> Option<String> {
-        self.currency.clone()
-    }
-}
-
-impl ConsumptionPageInfoFields
-    for consumption_hourly_page_info::ConsumptionHourlyPageInfoViewerHomeConsumptionPageInfo
-{
-    fn start_cursor(&self) -> Option<String> {
-        self.start_cursor.clone()
-    }
-    fn has_previous_page(&self) -> bool {
-        self.has_previous_page.unwrap()
-    }
-    fn count(&self) -> usize {
-        self.count.unwrap() as usize
-    }
-    fn total_cost(&self) -> Option<f64> {
-        self.total_cost
-    }
-    fn total_consumption(&self) -> Option<f64> {
-        self.total_consumption
-    }
-    fn currency(&self) -> Option<String> {
-        self.currency.clone()
     }
 }
 
@@ -566,9 +396,7 @@ async fn create_websocket(
 
     match result {
         Ok(res) => Ok(res),
-        Err(err) => Err(Box::new(
-            async_tungstenite::tungstenite::Error::from(err),
-        )),
+        Err(err) => Err(Box::new(async_tungstenite::tungstenite::Error::from(err))),
     }
 }
 
@@ -886,7 +714,10 @@ async fn get_consumption_page_info(
 /// ```
 pub async fn get_consumption_data_today(
     access_config: &AccessConfig,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     match get_todays_energy_consumption(&access_config).await {
         Ok(consumption) => {
             let time = Local::now()
@@ -913,7 +744,10 @@ pub async fn get_consumption_data_today(
 pub async fn get_cost_last_30_days(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     match get_last_n_days_energy_consumption(&access_config, 30).await {
         Ok(consumption) => {
             let time = consumption.last().ok_or(LoopEndingError::InvalidData)?.to
@@ -988,7 +822,10 @@ pub async fn get_cost_last_30_days(
 pub async fn get_cost_last_12_months(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     // Get the last 11 months consumption data
 
     let mut cursor = None;
@@ -1061,7 +898,10 @@ pub async fn get_cost_all_years_with_provider(
     provider: &dyn ConsumptionPageProvider,
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     info!(target: "tibberator.consumption", "Retrieving cost all years...");
 
     let mut cursor = None;
@@ -1086,7 +926,9 @@ pub async fn get_cost_all_years_with_provider(
     yearly_nodes.reverse();
 
     // Fetch the cost for the last 12 months
-    let monthly_data = provider.get_cost_last_12_months(access_config, estimated_daily_fee).await?;
+    let monthly_data = provider
+        .get_cost_last_12_months(access_config, estimated_daily_fee)
+        .await?;
 
     if let Some((monthly_costs, _, _)) = monthly_data {
         let current_month = Local::now().month() as usize;
@@ -1157,7 +999,10 @@ pub async fn get_cost_all_years_with_provider(
 pub async fn get_cost_all_years(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     let provider = RealConsumptionPageProvider;
     get_cost_all_years_with_provider(&provider, access_config, estimated_daily_fee).await
 }
@@ -1176,11 +1021,17 @@ pub async fn get_cost_all_years(
 ///
 pub async fn get_prices_today_tomorrow(
     access_config: &AccessConfig,
-) -> Result<Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<((Vec<f64>, Vec<f64>), String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     match get_hourly_energy_prices(access_config).await {
         Ok((today_prices, tomorrow_prices)) => {
             // Calculate expiration time based on last today price
-            let time = today_prices.last().ok_or(LoopEndingError::InvalidData)?.starts_at
+            let time = today_prices
+                .last()
+                .ok_or(LoopEndingError::InvalidData)?
+                .starts_at
                 + chrono::Duration::hours(1);
 
             // Map both today and tomorrow prices to Vec<f64>
@@ -1368,9 +1219,12 @@ async fn get_last_consumption_pages(
 pub async fn get_cost_data_today(
     access_config: &AccessConfig,
     estimated_daily_fee: &Option<f64>,
-) -> Result<Option<(Vec<f64>, String, DateTime<FixedOffset>)>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<
+    Option<(Vec<f64>, String, DateTime<FixedOffset>)>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
     let current_hour = Local::now().hour() as usize;
-    
+
     // Special case: when current_hour is 0 (midnight), we haven't completed any hours yet
     // so we shouldn't show any cost data
     if current_hour == 0 {
@@ -1382,18 +1236,18 @@ pub async fn get_cost_data_today(
             .and_local_timezone(Local)
             .unwrap()
             .fixed_offset();
-            
+
         let description_string = String::from("Cost Today [EUR]");
         let mut pages_so_far = Vec::new();
-        
+
         // Pad with zeros for all 24 hours
         for _i in 0..24 {
             pages_so_far.push(0.0);
         }
-        
+
         return Ok(Some((pages_so_far, description_string, next_hour)));
     }
-    
+
     let (mut pages_so_far, last_data_time) = match get_last_consumption_pages(
         access_config,
         current_hour,
@@ -1572,12 +1426,10 @@ async fn get_live_measurement(
                 ))),
             }
         }
-        Err(error) => {
-            Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Websocket creation error: {}", error),
-            )))
-        }
+        Err(error) => Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Websocket creation error: {}", error),
+        ))),
     }
 }
 
@@ -1612,7 +1464,9 @@ async fn get_live_measurement(
 ///   assert!(subscription.is_ok());
 /// # }
 /// ```
-pub async fn connect_live_measurement(config: &AccessConfig) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn connect_live_measurement(
+    config: &AccessConfig,
+) -> Result<LiveMeasurementSubscription, Box<dyn std::error::Error + Send + Sync>> {
     let subscription = get_live_measurement(&config).await;
 
     match subscription {

@@ -22,22 +22,17 @@ pub mod tibber {
     };
 
     // Import specific items from data_handling and data_types that are needed
-    pub use crate::tibber::data_handling::{
-        connect_live_measurement,
-        LiveMeasurementSubscription,
-        LiveMeasurementOperation,
-        get_consumption_data_today, get_cost_data_today, get_cost_last_30_days,
-        get_cost_last_12_months, get_cost_all_years, get_prices_today_tomorrow,
-        estimate_daily_fees, update_current_energy_price_info, get_home_ids,
-        check_real_time_subscription,
-        live_measurement,
-    };
-    pub use crate::tibber::data_types::{
-        AccessConfig, LoopEndingError, PriceInfo,
-    };
-    pub use crate::tibber::output::{OutputConfig as OutputConfigType};
-    pub use crate::tibber::tui::AppState;
     use crate::html_logger::LogConfig;
+    pub use crate::tibber::data_handling::{
+        check_real_time_subscription, connect_live_measurement, estimate_daily_fees,
+        get_consumption_data_today, get_cost_all_years, get_cost_data_today,
+        get_cost_last_12_months, get_cost_last_30_days, get_home_ids, get_prices_today_tomorrow,
+        live_measurement, update_current_energy_price_info, LiveMeasurementOperation,
+        LiveMeasurementSubscription,
+    };
+    pub use crate::tibber::data_types::{AccessConfig, LoopEndingError, PriceInfo};
+    pub use crate::tibber::output::OutputConfig as OutputConfigType;
+    pub use crate::tibber::tui::AppState;
     use output::{print_screen, DisplayMode};
 
     // Add trait definition for TibberDataProvider
